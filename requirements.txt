@@ -1,21 +1,43 @@
 --extra-index-url https://download.pytorch.org/whl/cpu
 
-# Core Frameworks
+# --- Core Async & Web ---
+aiofiles
+aiohappyeyeballs
+aiohttp
+aiosignal
+aiosqlite
+anyio
+asyncpg
 fastapi
+h11
+httpcore
+httpx
+httpx-sse
+starlette
 uvicorn
-celery
-redis
+python-multipart
+slowapi
+limits
+email-validator
+dnspython
+
+# --- Database & Migrations ---
+alembic
 sqlalchemy
 psycopg-binary
-pydantic
-pydantic-settings
-python-dotenv
-requests
-httpx
-aiohttp
-pyJWT
+psycopg
+redis
+greenlet
 pgvector
-# AI & ML (Let pip pick the compatible versions)
+qdrant-client
+
+# --- Auth & Security ---
+PyJWT
+passlib[bcrypt]
+python-jose
+python-dotenv
+
+# --- AI, ML & Data Science ---
 torch
 transformers
 optimum[onnxruntime]
@@ -26,34 +48,78 @@ scipy
 numpy
 pandas
 networkx
-huggingface-hub
-asyncpg
-greenlet
-
-# Azure & OpenAI
-openai
 tiktoken
-azure-ai-textanalytics
-azure-core
-azure-common
-langchain
-langchain-openai
-langchain-community
+tokenizers
+safetensors
+regex
+pydantic
+pydantic-settings
+pydantic_core
 
-# Utilities
-python-multipart
-python-dateutil
-pytz
+# --- Azure & OpenAI ---
+openai
+azure-ai-inference
+azure-ai-textanalytics
+azure-common
+azure-core
+
+# --- LangChain Ecosystem ---
+langchain
+langchain-classic
+langchain-community
+langchain-core
+langchain-openai
+langchain-text-splitters
+langgraph
+langgraph-checkpoint
+langgraph-prebuilt
+langgraph-sdk
+langsmith
+
+# --- Celery & Queue ---
+celery
+kombu
+amqp
+billiard
+vine
+
+# --- Utilities & processing ---
+requests
+requests-toolbelt
 tqdm
 colorama
 coloredlogs
+click
+click-didyoumean
+click-plugins
+click-repl
+cachetools
+charset-normalizer
+idna
 jinja2
-python-jose
-passlib[bcrypt]
-alembic
-
-# Vector DB
-qdrant-client
-
-slowapi
-limits
+joblib
+marshmallow
+multidict
+packaging
+pillow
+protobuf
+python-dateutil
+pytz
+pyyaml
+six
+tenacity
+typing-extensions
+urllib3
+wrapt
+xxhash
+yarl
+zstandard
+fsspec
+huggingface-hub
+filelock
+frozenlist
+attrs
+annotated-types
+certifi
+soupsieve
+beautifulsoup4
