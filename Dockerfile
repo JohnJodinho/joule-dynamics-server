@@ -1,5 +1,5 @@
 # Use Python 3.10 slim (Standard for HF Spaces)
-FROM python:3.10-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
