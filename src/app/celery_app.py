@@ -5,8 +5,13 @@ import ssl
 from celery import Celery
 from src.app.config import settings
 
-# 1. Define the Celery App Instance
-celery_app = Celery("chat_processor")
+celery_app = Celery(
+    "chat_processor",
+    include=[
+        "src.app.services.sentiment_worker",
+        "src.app.services.embedding_worker"
+    ]
+)
 
 # 2. Robust Azure Redis Configuration
 # These settings are critical to prevent "Connection closed by server"
