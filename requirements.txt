@@ -13,7 +13,8 @@ python-dotenv
 requests
 httpx
 aiohttp
-
+pyJWT
+pgvector
 # AI & ML (Let pip pick the compatible versions)
 torch
 transformers
@@ -25,6 +26,7 @@ scipy
 numpy
 pandas
 networkx
+huggingface-hub
 
 # Azure & OpenAI
 openai
@@ -50,3 +52,6 @@ alembic
 
 # Vector DB
 qdrant-client
+
+slowapi
+limits
