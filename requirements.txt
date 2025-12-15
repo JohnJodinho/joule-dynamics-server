@@ -27,6 +27,8 @@ numpy
 pandas
 networkx
 huggingface-hub
+asyncpg
+greenlet
 
 # Azure & OpenAI
 openai

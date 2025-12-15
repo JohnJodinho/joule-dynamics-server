@@ -18,10 +18,17 @@ broker_transport_options = {
     'health_check_interval': 15  # Ping Redis every 15s (Crucial for Azure)
 }
 
+ssl_options = {
+    'ssl_cert_reqs': ssl.CERT_NONE
+}
+
 celery_app.conf.update(
     broker_url=settings.CELERY_BROKER_URL,
     result_backend=settings.CELERY_RESULT_BACKEND,
     broker_transport_options=broker_transport_options,
+
+    broker_use_ssl=ssl_options,
+    redis_backend_use_ssl=ssl_options,
     
     # Task Settings
     task_serializer="json",
