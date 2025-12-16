@@ -4,13 +4,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 import asyncio
 import json 
 import logging
-import uuid
 from redis import asyncio as aioredis
-import os
+
 from src.app.config import settings
 from src.app.db.session import AsyncSessionLocal, get_db
 from src.app import crud, models, schemas
-from src.app.schemas import SentimentStatusEnum 
+
 from src.app.security import get_current_user, get_current_user_ws
 
 router = APIRouter()
@@ -19,16 +18,55 @@ log = logging.getLogger(__name__)
 REDIS_URL = settings.CELERY_BROKER_URL
 
 async def redis_event_generator(chat_id: int, request: Request):
-    try:
-        redis_client = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
-        pubsub = redis_client.pubsub()
-        channel = f"chat_progress_{chat_id}"
-        
+    
+    redis_client = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    pubsub = redis_client.pubsub()
+    channel = f"chat_progress_{chat_id}"
+    try: 
         await pubsub.subscribe(channel)
-        
+
+        initial_payload = None
+
+        async with AsyncSessionLocal() as db:
+            chat = await crud.get_chat(db, chat_id)
+            if chat: 
+                if chat.sentiment_status == "completed":
+                    initial_payload = {"status": "completed", "data": {"percent": 100, "status": "done"}}
+
+                elif chat.sentiment_status == "failed":
+                    initial_payload = {"status": "error", "data": {"error": "Analysis failed previously"}}
+
+
+                elif chat.sentiment_status == "processing":
+                    # Calculate current progress exactly like the worker does
+                    progress = await crud.get_sentiment_progress(db, chat_id)
+                    total = progress["messages_total"] + progress["segments_total"]
+                    done = progress["messages_scored"] + progress["segments_scored"]
+                    percent = int(100 * (done / total)) if total > 0 else 0
+                    
+                    initial_payload = {
+                        "status": "progress",
+                        "data": {
+                            "percent": percent,
+                            "messages_done": progress["messages_scored"],
+                            "messages_total": progress["messages_total"],
+                            "segments_done": progress["segments_scored"],
+                            "segments_total": progress["segments_total"],
+                            "total": total
+                        }
+                    }
+
         # Immediate connection feedback
         yield f"event: connected\ndata: {json.dumps({'msg': 'Connected'})}\n\n"
 
+        if initial_payload:
+            event_type = initial_payload["status"]
+            data_body = json.dumps(initial_payload["data"])
+            yield f"event: {event_type}\ndata: {data_body}\n\n"
+
+            if event_type in ["completed", "failed"]:
+                return 
+            
         async for message in pubsub.listen():
             if await request.is_disconnected():
                 break
