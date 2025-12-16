@@ -127,7 +127,10 @@ async def _process_batch(db, chat_id, buffer, create_func, get_text_func, pipe):
     
     publish_progress(chat_id, "progress", {
         "percent": percent,
-        "messages_done": done,
+        "messages_done": progress["messages_scored"],
+        "messages_total": progress["messages_total"],
+        "segments_done": progress["segments_scored"],
+        "segments_total": progress["segments_total"],
         "total": total
     })
 
