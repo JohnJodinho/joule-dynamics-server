@@ -3,14 +3,17 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# 1. Install system dependencies
-# build-essential is often needed for specific python wheels
+# 1. Install system dependencies + Redis Server
+USER root
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    redis-server \
     && rm -rf /var/lib/apt/lists/*
 
-# 2. Setup User 1000 (Required by Hugging Face)
-RUN useradd -m -u 1000 user
+RUN useradd -m -u 1000 user && \
+    mkdir -p /var/run/redis /var/log/redis && \
+    chown -R user:user /var/run/redis /var/log/redis /var/lib/redis
+
 USER user
 ENV HOME=/home/user \
     PATH=/home/user/.local/bin:$PATH \

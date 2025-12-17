@@ -11,6 +11,7 @@ from src.app.db.session import AsyncSessionLocal, get_db
 from src.app import crud, models, schemas
 
 from src.app.security import get_current_user, get_current_user_ws
+from src.app.utils.redis_helper import get_redis_client
 
 router = APIRouter()
 log = logging.getLogger(__name__)
@@ -18,67 +19,57 @@ log = logging.getLogger(__name__)
 REDIS_URL = settings.CELERY_BROKER_URL
 
 async def redis_event_generator(chat_id: int, request: Request):
-    
-    redis_client = aioredis.from_url(REDIS_URL, encoding="utf-8", decode_responses=True)
+    # 1. Get the best available Redis (Upstash or Local Fallback)
+    redis_client = await get_redis_client(use_async=True)
     pubsub = redis_client.pubsub()
     channel = f"chat_progress_{chat_id}"
+    
     try: 
         await pubsub.subscribe(channel)
 
-        initial_payload = None
-
+        # 2. IMMEDIATE Source-of-Truth Sync from Database
         async with AsyncSessionLocal() as db:
             chat = await crud.get_chat(db, chat_id)
-            if chat: 
+            if chat:
+                # Handle terminal states immediately
                 if chat.sentiment_status == "completed":
-                    initial_payload = {"status": "completed", "data": {"percent": 100, "status": "done"}}
-
+                    yield f"event: completed\ndata: {json.dumps({'percent': 100, 'status': 'done'})}\n\n"
+                    return 
+                
                 elif chat.sentiment_status == "failed":
-                    initial_payload = {"status": "error", "data": {"error": "Analysis failed previously"}}
+                    yield f"event: error\ndata: {json.dumps({'error': 'Analysis failed previously'})}\n\n"
+                    return
 
+                # Calculate detailed progress for 'processing' or 'pending' states
+                progress = await crud.get_sentiment_progress(db, chat_id)
+                total = progress["messages_total"] + progress["segments_total"]
+                done = progress["messages_scored"] + progress["segments_scored"]
+                percent = int(100 * (done / total)) if total > 0 else 0
+                
+                # Send the full payload so the UI has all counters immediately
+                initial_data = {
+                    "percent": percent,
+                    "messages_done": progress["messages_scored"],
+                    "messages_total": progress["messages_total"],
+                    "segments_done": progress["segments_scored"],
+                    "segments_total": progress["segments_total"],
+                    "total": total
+                }
+                yield f"event: progress\ndata: {json.dumps(initial_data)}\n\n"
 
-                elif chat.sentiment_status == "processing":
-                    # Calculate current progress exactly like the worker does
-                    progress = await crud.get_sentiment_progress(db, chat_id)
-                    total = progress["messages_total"] + progress["segments_total"]
-                    done = progress["messages_scored"] + progress["segments_scored"]
-                    percent = int(100 * (done / total)) if total > 0 else 0
-                    
-                    initial_payload = {
-                        "status": "progress",
-                        "data": {
-                            "percent": percent,
-                            "messages_done": progress["messages_scored"],
-                            "messages_total": progress["messages_total"],
-                            "segments_done": progress["segments_scored"],
-                            "segments_total": progress["segments_total"],
-                            "total": total
-                        }
-                    }
-
-        # Immediate connection feedback
-        yield f"event: connected\ndata: {json.dumps({'msg': 'Connected'})}\n\n"
-
-        if initial_payload:
-            event_type = initial_payload["status"]
-            data_body = json.dumps(initial_payload["data"])
-            yield f"event: {event_type}\ndata: {data_body}\n\n"
-
-            if event_type in ["completed", "failed"]:
-                return 
-            
+        # 3. Listen for Real-time Updates
         async for message in pubsub.listen():
             if await request.is_disconnected():
                 break
 
             if message["type"] == "message":
                 payload = json.loads(message["data"])
-                
-                event_type = payload.get("status", "progress") 
+                event_type = payload.get("status", "progress")
                 data_body = json.dumps(payload.get("data", {}))
                 
                 yield f"event: {event_type}\ndata: {data_body}\n\n"
 
+                # Stop the stream on terminal events
                 if event_type in ["completed", "failed", "error", "cancelled"]:
                     break
                     
@@ -86,11 +77,8 @@ async def redis_event_generator(chat_id: int, request: Request):
         log.error(f"SSE Error: {e}")
         yield f"event: error\ndata: {json.dumps({'error': 'Stream internal error'})}\n\n"
     finally:
-        try:
-            await pubsub.unsubscribe(channel)
-            await redis_client.close()
-        except:
-            pass
+        await pubsub.unsubscribe(channel)
+        await redis_client.close()
 
 
 @router.get("/progress/{chat_id}")
@@ -125,7 +113,7 @@ async def cancel_sentiment_analysis(
         db.add(chat)
         await db.commit()
         
-        redis_client = aioredis.from_url(REDIS_URL)
+        redis_client = await get_redis_client(use_async=True)
         try:
             # 2. Redis Kill Switch (Speed)
             # Set a flag that expires in 1 hour. Worker checks this frequently.

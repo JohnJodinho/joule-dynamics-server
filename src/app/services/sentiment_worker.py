@@ -12,6 +12,7 @@ from sqlalchemy.pool import NullPool
 from src.app import crud, models
 from src.app.celery_app import celery_app
 from src.app.config import settings
+from src.app.utils.redis_helper import get_redis_client
 
 
 log = logging.getLogger(__name__)
@@ -62,24 +63,27 @@ def get_pipeline():
             raise e
     return _PIPELINE
 
-def get_redis_sync():
-    return redis.Redis(connection_pool=redis_pool)
 
 def should_stop(chat_id: int) -> bool:
+    """
+    Checks the currently active Redis (Upstash or Fallback) for a stop signal.
+    """
     try:
-        r = get_redis_sync()
+        r = get_redis_client() 
         if r.exists(f"stop_signal_{chat_id}"):
+            log.info(f"🛑 Stop signal detected for chat {chat_id}")
             return True
-    except Exception:
-        pass 
+    except Exception as e:
+        log.warning(f"Could not check stop signal: {e}")
     return False
 
 def publish_progress(chat_id: int, status_key: str, data: dict):
+    """Resilient publishing that finds the active Redis instance."""
     try:
-        r = get_redis_sync()
+        r = get_redis_client()
         r.publish(f"chat_progress_{chat_id}", json.dumps({"status": status_key, "data": data}))
     except Exception as e:
-        log.error(f"Redis Publish Error: {e}")
+        log.error(f"Failed to publish progress to any Redis: {e}")
 
 async def _process_batch(db, chat_id, buffer, create_func, get_text_func, pipe):
     if not buffer: return
@@ -144,21 +148,20 @@ async def process_chat_logic(chat_id: int):
         if not chat: return
         
         # Mark as processing
-        if chat.sentiment_status != models.SentimentStatusEnum.processing.value:
-            chat.sentiment_status = models.SentimentStatusEnum.processing.value
-            db.add(chat)
-            await db.commit()
+        # Reconciliation: Always ensure DB shows 'processing' when task starts/resumes
+        chat.sentiment_status = models.SentimentStatusEnum.processing.value
+        await db.commit()
 
         try:
-            # 1. Process Messages
+            # 1. Process Messages (Resumes where sentiment is NULL)
             buffer = []
             async for item in crud.stream_unscored_messages(db, chat_id):
                 buffer.append(item)
-                if len(buffer) >= 100: # Process every 100 items
+                if len(buffer) >= 100:
                     await _process_batch(db, chat_id, buffer, crud.create_message_sentiment, lambda x: x.content, pipe)
                     buffer = []
             if buffer: await _process_batch(db, chat_id, buffer, crud.create_message_sentiment, lambda x: x.content, pipe)
-
+           
             # 2. Process Segments (Same logic)
             buffer = []
             async for item in crud.stream_unscored_sender_segments(db, chat_id):
