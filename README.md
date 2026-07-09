@@ -8,5 +8,5 @@ app_port: 7860
 pinned: false
 ---
 
-# SentimentScope Backend
-This is the private backend worker running FastAPI + Celery + ONNX Quantized Model.
+# Joule Dynamics RAG Demo
+Backend API for the Amara Home & Kitchen RAG chatbot.
