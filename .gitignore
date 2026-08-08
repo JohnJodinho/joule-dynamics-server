@@ -59,3 +59,9 @@ venv/
 ENV/
 env.bak/
 venv.bak/
+
+docs_research
+tools
+Real Estate Intelligence Layer.md
+grant_privileges.sql
+agent_prompt.md

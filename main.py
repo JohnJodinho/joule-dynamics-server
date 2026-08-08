@@ -19,11 +19,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-print("Initializing Embedding Model...")
-embed_model = SentenceTransformer("all-MiniLM-L6-v2")
-texts = [d["text"] for d in KB_DOCS]
-kb_embeddings = embed_model.encode(texts, normalize_embeddings=True)
-print("Embeddings loaded into memory.")
+
+from services.embedding_service import get_embedding_model
+import unified_ingest
+
+# Ensure local and remote KBs are seeded idempotently
+unified_ingest.ensure_ingested()
+
+embed_model = get_embedding_model()
+kb_embeddings = np.load("kb_embeddings.npy")
 
 groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
 
@@ -77,3 +81,7 @@ def chat(req: ChatRequest):
     except Exception:
         answer = ask_groq(req.question, context, model="llama-3.1-8b-instant")
     return {"answer": answer}
+
+# Import and mount the new Real Estate router
+from routes import real_estate_chat
+app.include_router(real_estate_chat.router)
