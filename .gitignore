@@ -67,3 +67,7 @@ grant_privileges.sql
 agent_prompt.md
 dynamic_tool_calling_features.txt
 Frontend_API_Updates.md
+*.npy
+section_titles.json
+test_rpcs.py
+test_api.py

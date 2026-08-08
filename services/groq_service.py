@@ -1,30 +1,54 @@
 import json
 import re
+import os
+import numpy as np
 from groq import Groq
 from services.tools import REAL_ESTATE_TOOLS
 from services.supabase_service import execute_tool_rpc, search_methodology_rag
+from services.embedding_service import get_embedding_model
 from config import GROQ_API_KEY
 
 session_history = {}
 
 groq_client = Groq(api_key=GROQ_API_KEY)
+embedder = get_embedding_model()
+
+try:
+    if os.path.exists("section_title_embeddings.npy") and os.path.exists("section_titles.json"):
+        section_title_embeddings = np.load("section_title_embeddings.npy")
+        with open("section_titles.json", "r", encoding="utf-8") as f:
+            section_titles = json.load(f)
+        print(f"Loaded {len(section_titles)} local section titles for pre-routing.")
+    else:
+        section_title_embeddings = None
+        section_titles = []
+except Exception as e:
+    print(f"Failed to load local section title embeddings: {e}")
+    section_title_embeddings = None
+    section_titles = []
 
 ROUTER_PROMPT = """You are the classification router for the Joule Dynamics Real Estate Intelligence Layer.
-Analyze the user query and classify it into EXACTLY ONE of six classifications:
+Analyze the user query and classify it into EXACTLY ONE of five classifications:
 
 1. "OUT_OF_SCOPE": Query asks about Leads, Lead-capture, Pricing Monitor data, general web crawling, or cross-system topics outside of the /real-estate page.
 2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates).
 3. "PATH_B": Query asks a methodology/system design question (7-day average definition, 2-night check-in window, 4x daily scrape cadence, Vrbo status, World Cup strategy).
-4. "PATH_C": Query asks a general real estate market context question that does not require live data metrics from our system.
-5. "BOTH": Query requires BOTH explaining a methodology concept AND fetching live data metrics.
-6. "GREETING": User is saying hello, thanking the assistant, or making casual conversation without asking a specific question.
+4. "BOTH": Query requires BOTH explaining a methodology concept AND fetching live data metrics.
+5. "GREETING": User is saying hello, thanking the assistant, or making casual conversation without asking a specific question.
 
 Respond ONLY with valid JSON matching this schema:
-{"classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "PATH_C" | "BOTH" | "GREETING", "reason": "1-sentence justification"}
+{"classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING", "reason": "1-sentence justification"}
 """
 
 SYNTHESIS_PROMPT = """You are the B2B Real Estate Intelligence Assistant for Joule Dynamics.
 You provide precise data analysis to real estate investors and property managers reviewing short-term rental market performance.
+
+IMMUTABLE SYSTEM BOUNDARIES & HARD FACTS:
+1. TRACKED MARKETS: You ONLY track two markets: 'NYC/NJ Metro' and 'Miami'. 
+2. TRACKED PLATFORMS: You ONLY track two platforms: 'Airbnb' (Active daily tracking) and 'Vrbo' (Historical data only).
+3. ABSOLUTE FORBIDDEN ENTITIES: You must NEVER list, suggest, or mention any other cities (e.g., Los Angeles, Chicago, Houston, Orlando) or other booking platforms (e.g., Booking.com, Expedia, Tripadvisor). If asked about them, state plainly that they are outside Joule Dynamics' current tracking scope.
+4. ZERO FABRICATION: Every single price, rate change percentage, property count, and availability status MUST come directly from a returned tool output JSON. If a tool returns no data or an error, state: "I don't have that information in the current real estate scope."
+5. NO RAW SQL: Never attempt to write or generate SQL queries. Rely strictly on the registered tool RPCs provided.
 
 OPERATIONAL RULES:
 1. NEVER FABRICATE DATA: Rely strictly on returned tool outputs or retrieved methodology chunks. NEVER write ad-hoc SQL. You must exclusively use the registered tools provided.
@@ -38,11 +62,33 @@ OPERATIONAL RULES:
 """
 
 async def process_chat_message(user_query: str, session_id: str, session_context: dict) -> dict:
+    global section_title_embeddings, section_titles
+
     if session_id not in session_history:
         session_history[session_id] = []
 
-    # STEP 1: Routing Classification (llama-3.1-8b-instant)
-    router_messages = [{"role": "system", "content": ROUTER_PROMPT}]
+    # STEP 1: Pre-Router Local Vector Search
+    pre_check_hint = ""
+    if section_title_embeddings is None and os.path.exists("section_title_embeddings.npy"):
+        try:
+            section_title_embeddings = np.load("section_title_embeddings.npy")
+            with open("section_titles.json", "r", encoding="utf-8") as f:
+                section_titles = json.load(f)
+        except Exception as e:
+            print(f"Lazy load failed: {e}")
+
+    if section_title_embeddings is not None and len(section_titles) > 0:
+        query_emb = embedder.encode([user_query], normalize_embeddings=True)[0]
+        sims = section_title_embeddings @ query_emb
+        top_idx = np.argsort(sims)[::-1][:3]
+        matched_titles = [section_titles[i] for i in top_idx if sims[i] >= 0.45]
+        
+        if matched_titles:
+            pre_check_hint = f"\n\nLocal Methodology Pre-Check: High similarity match with section titles: {matched_titles}. Consider classifying as PATH_B or BOTH."
+
+    router_sys_prompt = ROUTER_PROMPT + pre_check_hint
+    router_messages = [{"role": "system", "content": router_sys_prompt}]
+    
     # To save tokens on routing, only include the last 4 messages of history
     router_messages.extend(session_history[session_id][-4:])
     router_messages.append({"role": "user", "content": user_query})
@@ -63,7 +109,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         routing = {}
         
     classification = routing.get("classification", "PATH_A")
-    if classification not in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "PATH_C", "BOTH", "GREETING"]:
+    if classification not in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING"]:
         classification = "PATH_A"
 
     # Guardrail: Immediate short-circuit if Out of Scope
@@ -90,18 +136,9 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     if classification in ["PATH_B", "BOTH"]:
         rag_chunks = await search_methodology_rag(user_query)
 
-    # STEP 2: Execute Vector Search if Path B or Both
-    if classification in ["PATH_B", "BOTH"]:
-        rag_chunks = await search_methodology_rag(user_query)
-
     messages = [
         {"role": "system", "content": SYNTHESIS_PROMPT}
     ]
-    if classification == "PATH_C":
-        messages.append({
-            "role": "system",
-            "content": "Note: Because this is a PATH_C query, you must prepend a strict disclaimer stating: 'Note: This is general market context, not live data from the Joule Dynamics tracking system.'"
-        })
 
     messages.extend(session_history[session_id])
 
