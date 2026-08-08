@@ -54,6 +54,13 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     )
     
     routing = json.loads(router_res.choices[0].message.content)
+    
+    # Handle cases where the LLM might unexpectedly return a JSON array instead of an object
+    if isinstance(routing, list) and len(routing) > 0:
+        routing = routing[0]
+    elif not isinstance(routing, dict):
+        routing = {}
+        
     classification = routing.get("classification", "PATH_A")
 
     # Guardrail: Immediate short-circuit if Out of Scope
