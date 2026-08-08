@@ -25,11 +25,19 @@ async def handle_real_estate_chat(payload: ChatRequest, request: Request):
     client_key = payload.session_id or request.client.host
     limiter.check_rate_limit(client_key)
     
-    result = await process_chat_message(
-        user_query=payload.message,
-        session_id=payload.session_id,
-        session_context=payload.context or {}
-    )
+    try:
+        result = await process_chat_message(
+            user_query=payload.message,
+            session_id=payload.session_id,
+            session_context=payload.context or {}
+        )
+    except Exception as e:
+        return ChatResponse(
+            reply="Unable to reach the intelligence layer. Please try again shortly.",
+            path_used="ERROR",
+            tools_called=[],
+            suggested_actions=[]
+        )
     
     return ChatResponse(
         reply=result["reply"],

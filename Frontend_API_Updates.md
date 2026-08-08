@@ -44,3 +44,11 @@ The backend has been upgraded with a new fallback route and additional Postgres 
 **Frontend Impact:**
 - **PATH_C Fallback:** A new routing classification (`PATH_C`) is returned in `path_used` when the user asks a general real estate context question. The assistant will dynamically inject a disclaimer into the response text stating: *"Note: This is general market context, not live data from the Joule Dynamics tracking system."* No UI changes are strictly necessary, but be aware of the new `PATH_C` value in the response.
 - **Robust Error Handling:** The assistant is explicitly instructed to never guess missing parameters or write ad-hoc queries. Missing parameters or invalid formats (such as UUID validation errors) will cleanly trigger the `suggested_actions` clarification flow to ask the user for correct details. Ensure the clarification buttons are rendered robustly.
+
+## 5. Backend Exception & Rate Limit Handling
+
+When the backend hits an API rate limit or encounters a systemic failure, it will no longer crash or leak raw traceback errors to the frontend.
+
+**Frontend Implementation:**
+- **ERROR Route:** In these failure scenarios (such as an upstream Groq API rate limit), the backend will cleanly return a response with `path_used` set to `"ERROR"`.
+- **UI Behavior:** The frontend should handle this gracefully without polluting the chat history. Instead of displaying the raw error text as a standard assistant message, the UI should intercept the `"ERROR"` path, gray out the chat interface, and display a user-friendly system alert: *"Real Estate Intelligence Layer experienced an issue. Resolving..."*
