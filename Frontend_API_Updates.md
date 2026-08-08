@@ -36,3 +36,11 @@ The LLM is now strictly instructed to output its replies using **Markdown** form
 - The frontend chat UI must be capable of rendering standard Markdown into HTML.
 - When the user asks to "download this data" or "export a CSV", the backend will generate the file, upload it to Appwrite, and return a Markdown link in the `reply` text (e.g., `[Download your CSV Report here](https://fra.cloud.appwrite.io/v1/storage/...)`). 
 - The frontend's markdown parser should seamlessly render this as a standard clickable anchor tag (`<a>`) so the user can download the file.
+
+## 4. Expanded Tool Registry & New Route
+
+The backend has been upgraded with a new fallback route and additional Postgres RPC tools.
+
+**Frontend Impact:**
+- **PATH_C Fallback:** A new routing classification (`PATH_C`) is returned in `path_used` when the user asks a general real estate context question. The assistant will dynamically inject a disclaimer into the response text stating: *"Note: This is general market context, not live data from the Joule Dynamics tracking system."* No UI changes are strictly necessary, but be aware of the new `PATH_C` value in the response.
+- **Robust Error Handling:** The assistant is explicitly instructed to never guess missing parameters or write ad-hoc queries. Missing parameters or invalid formats (such as UUID validation errors) will cleanly trigger the `suggested_actions` clarification flow to ask the user for correct details. Ensure the clarification buttons are rendered robustly.

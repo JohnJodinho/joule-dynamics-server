@@ -82,5 +82,69 @@ REAL_ESTATE_TOOLS = [
                 "required": ["format", "content"]
             }
         }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_tracked_markets",
+            "description": "Fetch active markets being tracked, optionally filtered by platform.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "p_platform": {"type": "string", "description": "Optional platform filter (e.g. 'Airbnb' or 'Vrbo')"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_properties",
+            "description": "Search and filter properties by text, market, platform, bedrooms, or availability.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "p_search": {"type": "string", "description": "Search text (name or uuid)"},
+                    "p_market": {"type": "string", "description": "Market region name"},
+                    "p_platform": {"type": "string", "description": "Platform (e.g. 'Airbnb')"},
+                    "p_bedrooms": {"type": "integer", "description": "Number of bedrooms"},
+                    "p_available": {"type": "boolean", "description": "Availability status"},
+                    "p_limit": {"type": "integer", "default": 50, "description": "Number of results to return (max 200)"}
+                },
+                "required": []
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_property_rate_changes",
+            "description": "Show historical rate changes and trailing averages for a specific property over time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "property_search": {"type": "string", "description": "Property name or UUID (required)"},
+                    "days_param": {"type": "integer", "default": 14, "description": "Lookback window in days (max 90)"},
+                    "compare_window_days": {"type": "integer", "default": 1, "description": "Days to compare against for pct_change_vs_prev (max 14)"}
+                },
+                "required": ["property_search"]
+            }
+        }
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_distance_km",
+            "description": "Calculate the geographic distance in kilometers between two properties.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "property_a_id": {"type": "string", "description": "UUID of the first property"},
+                    "property_b_id": {"type": "string", "description": "UUID of the second property"}
+                },
+                "required": ["property_a_id", "property_b_id"]
+            }
+        }
     }
 ]

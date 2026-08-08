@@ -10,27 +10,28 @@ session_history = {}
 groq_client = Groq(api_key=GROQ_API_KEY)
 
 ROUTER_PROMPT = """You are the classification router for the Joule Dynamics Real Estate Intelligence Layer.
-Analyze the user query and classify it into EXACTLY ONE of five classifications:
+Analyze the user query and classify it into EXACTLY ONE of six classifications:
 
 1. "OUT_OF_SCOPE": Query asks about Leads, Lead-capture, Pricing Monitor data, general web crawling, or cross-system topics outside of the /real-estate page.
 2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates).
 3. "PATH_B": Query asks a methodology/system design question (7-day average definition, 2-night check-in window, 4x daily scrape cadence, Vrbo status, World Cup strategy).
-4. "BOTH": Query requires BOTH explaining a methodology concept AND fetching live data metrics.
-5. "GREETING": User is saying hello, thanking the assistant, or making casual conversation without asking a specific question.
+4. "PATH_C": Query asks a general real estate market context question that does not require live data metrics from our system.
+5. "BOTH": Query requires BOTH explaining a methodology concept AND fetching live data metrics.
+6. "GREETING": User is saying hello, thanking the assistant, or making casual conversation without asking a specific question.
 
 Respond ONLY with valid JSON matching this schema:
-{"classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING", "reason": "1-sentence justification"}
+{"classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "PATH_C" | "BOTH" | "GREETING", "reason": "1-sentence justification"}
 """
 
 SYNTHESIS_PROMPT = """You are the B2B Real Estate Intelligence Assistant for Joule Dynamics.
 You provide precise data analysis to real estate investors and property managers reviewing short-term rental market performance.
 
 OPERATIONAL RULES:
-1. NEVER FABRICATE DATA: Rely strictly on returned tool outputs or retrieved methodology chunks.
+1. NEVER FABRICATE DATA: Rely strictly on returned tool outputs or retrieved methodology chunks. NEVER write ad-hoc SQL. You must exclusively use the registered tools provided.
 2. ZERO GUESSING: If data or methodology is missing, state plainly: "I don't have that information in the current real estate scope."
 3. SCOPE BOUNDARY: If asked about Leads or Price Monitors, state that you are currently scoped exclusively to the Real Estate Rate Monitor.
-4. FORMAT: Always format your final output in valid Markdown. Use bolding, lists, and tables to make data highly readable.
-5. CLARIFICATION: If the user's request is ambiguous or if a tool is missing parameters, you can ask a clarifying question. To provide clickable options to the user, include a specific JSON block at the very end of your response exactly like this:
+4. FORMAT: Always format your final output in valid Markdown. Ensure you use tables, bold headers, and bulleted lists to make data highly readable.
+5. CLARIFICATION & ERRORS: If the user's request is ambiguous, a tool is missing parameters (like a market name or UUID), or if a tool returns an error message, DO NOT hallucinate inputs. Stop and provide a human-friendly response asking for clarification. To provide clickable options to the user, include a specific JSON block at the very end of your response exactly like this:
 ```json
 {"clarification_options": ["Option A", "Option B"]}
 ```
@@ -62,6 +63,8 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         routing = {}
         
     classification = routing.get("classification", "PATH_A")
+    if classification not in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "PATH_C", "BOTH", "GREETING"]:
+        classification = "PATH_A"
 
     # Guardrail: Immediate short-circuit if Out of Scope
     if classification == "OUT_OF_SCOPE":
@@ -94,6 +97,12 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     messages = [
         {"role": "system", "content": SYNTHESIS_PROMPT}
     ]
+    if classification == "PATH_C":
+        messages.append({
+            "role": "system",
+            "content": "Note: Because this is a PATH_C query, you must prepend a strict disclaimer stating: 'Note: This is general market context, not live data from the Joule Dynamics tracking system.'"
+        })
+
     messages.extend(session_history[session_id])
 
     user_msg_content = f"User Context Filters: {json.dumps(session_context)}\nUser Query: {user_query}"
