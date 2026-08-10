@@ -7,8 +7,10 @@ from groq import Groq
 from services.tools import REAL_ESTATE_TOOLS
 from services.supabase_service import execute_tool_rpc, search_methodology_rag
 from services.embedding_service import get_embedding_model
-from services.observability import setup_logger, ConversationTurn, RoutingDecision, EmbeddingsInfo, ToolExecution
+from services.observability import setup_logger
 from config import GROQ_API_KEY
+from langfuse import observe, propagate_attributes, get_client
+import langfuse
 
 logger = setup_logger(__name__)
 
@@ -65,14 +67,16 @@ OPERATIONAL RULES:
 ```
 """
 
+@observe(name="process-chat")
 async def process_chat_message(user_query: str, session_id: str, session_context: dict) -> dict:
     global section_title_embeddings, section_titles
     start_time = time.time()
     
-    embeddings_info = EmbeddingsInfo()
-
-    if session_id not in session_history:
-        session_history[session_id] = []
+    with propagate_attributes(session_id=session_id, tags=["real-estate-chat"]):
+        get_client().update_current_span(input=user_query)
+        
+        if session_id not in session_history:
+            session_history[session_id] = []
 
     # STEP 1: Pre-Router Local Vector Search
     pre_check_hint = ""
@@ -91,9 +95,8 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         matched_titles = [section_titles[i] for i in top_idx if sims[i] >= 0.45]
         
         if matched_titles:
-            embeddings_info.matched_section_titles = matched_titles
-            embeddings_info.similarity_scores = [float(sims[i]) for i in top_idx if sims[i] >= 0.45]
             pre_check_hint = f"\n\nLocal Methodology Pre-Check: High similarity match with section titles: {matched_titles}. Consider classifying as PATH_B or BOTH."
+            get_client().update_current_span(metadata={"matched_section_titles": matched_titles, "similarity_scores": [float(sims[i]) for i in top_idx if sims[i] >= 0.45]})
 
     router_sys_prompt = ROUTER_PROMPT + pre_check_hint
     router_messages = [{"role": "system", "content": router_sys_prompt}]
@@ -122,42 +125,28 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     if classification not in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING"]:
         classification = "PATH_A"
 
-    routing_decision = RoutingDecision(classification=classification, reason=reason)
+    get_client().update_current_span(metadata={"classification": classification, "reason": reason})
     snapshot_history = session_history[session_id].copy() if session_id in session_history else []
-
-    def build_telemetry(reply_text: str, tools_exec: list, docs: list, suggested: list) -> dict:
-        return ConversationTurn(
-            session_id=session_id,
-            user_message=user_query,
-            model_response=reply_text,
-            time_taken_ms=int((time.time() - start_time) * 1000),
-            routing_decision=routing_decision,
-            embeddings_info=embeddings_info,
-            docs_retrieved=docs,
-            tools_executed=tools_exec,
-            history_context=snapshot_history,
-            suggested_actions=suggested
-        ).model_dump()
 
     # Guardrail: Immediate short-circuit if Out of Scope
     if classification == "OUT_OF_SCOPE":
         reply_out = "I apologize, but I am currently scoped exclusively to the Real Estate Rate Monitor page. I cannot assist with other topics like lead generation, pricing automation, or general knowledge outside of real estate data."
+        get_client().update_current_span(output=reply_out)
         return {
             "reply": reply_out,
             "path_used": "OUT_OF_SCOPE",
             "tools_called": [],
-            "suggested_actions": [],
-            "telemetry": build_telemetry(reply_out, [], [], [])
+            "suggested_actions": []
         }
 
     if classification == "GREETING":
         reply_greeting = "Hello! I'm the Joule Dynamics Real Estate Intelligence Assistant. I can help you with rate spikes, market trends, and availability data. How can I assist you today?"
+        get_client().update_current_span(output=reply_greeting)
         return {
             "reply": reply_greeting,
             "path_used": "GREETING",
             "tools_called": [],
-            "suggested_actions": [],
-            "telemetry": build_telemetry(reply_greeting, [], [], [])
+            "suggested_actions": []
         }
 
     tool_results = []
@@ -209,7 +198,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
             else:
                 db_result = await execute_tool_rpc(func_name, func_args)
                 
-            tool_results.append(ToolExecution(tool_name=func_name, args=func_args, db_response=db_result))
+            tool_results.append({"tool": func_name, "args": func_args})
 
             messages.append({
                 "tool_call_id": tool_call.id,
@@ -248,10 +237,11 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         except json.JSONDecodeError:
             pass
 
+    get_client().update_current_span(output=final_reply)
+
     return {
         "reply": final_reply,
         "path_used": classification,
-        "tools_called": [{"tool": t.tool_name, "args": t.args} for t in tool_results],
-        "suggested_actions": suggested_actions,
-        "telemetry": build_telemetry(final_reply, tool_results, rag_chunks, suggested_actions)
+        "tools_called": tool_results,
+        "suggested_actions": suggested_actions
     }

@@ -1,13 +1,28 @@
 import os
-import numpy as np
+import uvicorn
 from fastapi import FastAPI
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from langfuse import get_client
+from openinference.instrumentation.groq import GroqInstrumentor
+
+# Initialize Langfuse client and verify connectivity
+langfuse = get_client()
+if not langfuse.auth_check():
+    print("WARNING: Langfuse auth failed - check your keys ✋")
+
+# Initialize OpenTelemetry instrumentation for Groq
+GroqInstrumentor().instrument()
+
+from services.observability import setup_logger
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sentence_transformers import SentenceTransformer
+import numpy as np
 from groq import Groq
-from dotenv import load_dotenv
 from kb_docs import KB_DOCS
-
 load_dotenv()
 app = FastAPI()
 

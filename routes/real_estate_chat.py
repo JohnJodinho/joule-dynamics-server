@@ -5,7 +5,6 @@ from pydantic import BaseModel
 
 from services.groq_service import process_chat_message
 from services.rate_limiter import limiter
-from services.observability import log_conversation_turn, ConversationTurn
 
 router = APIRouter(prefix="/api/v1/real-estate", tags=["Real Estate Intelligence Layer"])
 
@@ -21,7 +20,7 @@ class ChatResponse(BaseModel):
     suggested_actions: Optional[List[str]] = []
 
 @router.post("/chat", response_model=ChatResponse)
-async def handle_real_estate_chat(payload: ChatRequest, request: Request, background_tasks: BackgroundTasks):
+async def handle_real_estate_chat(payload: ChatRequest, request: Request):
     # Enforce token bucket rate limiting by session ID or client IP
     client_key = payload.session_id or request.client.host
     limiter.check_rate_limit(client_key)
@@ -37,16 +36,7 @@ async def handle_real_estate_chat(payload: ChatRequest, request: Request, backgr
             reply="Unable to reach the intelligence layer. Please try again shortly.",
             path_used="ERROR",
             tools_called=[],
-            suggested_actions=[]
         )
-    
-    if "telemetry" in result:
-        try:
-            turn_obj = ConversationTurn(**result["telemetry"])
-            background_tasks.add_task(log_conversation_turn, turn_obj)
-        except Exception as e:
-            # Optionally log validation errors
-            pass
 
     return ChatResponse(
         reply=result["reply"],
