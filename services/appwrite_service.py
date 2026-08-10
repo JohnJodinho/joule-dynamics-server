@@ -4,6 +4,9 @@ import os
 from appwrite.client import Client
 from appwrite.services.storage import Storage
 from appwrite.input_file import InputFile
+from services.observability import setup_logger
+
+logger = setup_logger(__name__)
 from config import (
     APP_WRITE_PROJECT_ID,
     APP_WRITE_API_ENDPOINT,
@@ -42,7 +45,7 @@ async def upload_document_to_appwrite(content: str, format: str) -> str:
         url = f"{APP_WRITE_API_ENDPOINT}/storage/buckets/{APP_WRITE_BUCKET_ID}/files/{file_id}/view?project={APP_WRITE_PROJECT_ID}"
         return url
     except Exception as e:
-        print(f"Appwrite Upload Error: {e}")
+        logger.error(f"Appwrite Upload Error: {e}")
         return f"Error uploading file: {e}"
     finally:
         if os.path.exists(temp_path):

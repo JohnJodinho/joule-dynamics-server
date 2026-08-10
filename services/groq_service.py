@@ -1,12 +1,16 @@
 import json
 import re
 import os
+import time
 import numpy as np
 from groq import Groq
 from services.tools import REAL_ESTATE_TOOLS
 from services.supabase_service import execute_tool_rpc, search_methodology_rag
 from services.embedding_service import get_embedding_model
+from services.observability import setup_logger, ConversationTurn, RoutingDecision, EmbeddingsInfo, ToolExecution
 from config import GROQ_API_KEY
+
+logger = setup_logger(__name__)
 
 session_history = {}
 
@@ -18,12 +22,12 @@ try:
         section_title_embeddings = np.load("section_title_embeddings.npy")
         with open("section_titles.json", "r", encoding="utf-8") as f:
             section_titles = json.load(f)
-        print(f"Loaded {len(section_titles)} local section titles for pre-routing.")
+        logger.info(f"Loaded {len(section_titles)} local section titles for pre-routing.")
     else:
         section_title_embeddings = None
         section_titles = []
 except Exception as e:
-    print(f"Failed to load local section title embeddings: {e}")
+    logger.error(f"Failed to load local section title embeddings: {e}")
     section_title_embeddings = None
     section_titles = []
 
@@ -63,6 +67,9 @@ OPERATIONAL RULES:
 
 async def process_chat_message(user_query: str, session_id: str, session_context: dict) -> dict:
     global section_title_embeddings, section_titles
+    start_time = time.time()
+    
+    embeddings_info = EmbeddingsInfo()
 
     if session_id not in session_history:
         session_history[session_id] = []
@@ -75,7 +82,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
             with open("section_titles.json", "r", encoding="utf-8") as f:
                 section_titles = json.load(f)
         except Exception as e:
-            print(f"Lazy load failed: {e}")
+            logger.error(f"Lazy load failed: {e}")
 
     if section_title_embeddings is not None and len(section_titles) > 0:
         query_emb = embedder.encode([user_query], normalize_embeddings=True)[0]
@@ -84,6 +91,8 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         matched_titles = [section_titles[i] for i in top_idx if sims[i] >= 0.45]
         
         if matched_titles:
+            embeddings_info.matched_section_titles = matched_titles
+            embeddings_info.similarity_scores = [float(sims[i]) for i in top_idx if sims[i] >= 0.45]
             pre_check_hint = f"\n\nLocal Methodology Pre-Check: High similarity match with section titles: {matched_titles}. Consider classifying as PATH_B or BOTH."
 
     router_sys_prompt = ROUTER_PROMPT + pre_check_hint
@@ -109,24 +118,46 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         routing = {}
         
     classification = routing.get("classification", "PATH_A")
+    reason = routing.get("reason")
     if classification not in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING"]:
         classification = "PATH_A"
 
+    routing_decision = RoutingDecision(classification=classification, reason=reason)
+    snapshot_history = session_history[session_id].copy() if session_id in session_history else []
+
+    def build_telemetry(reply_text: str, tools_exec: list, docs: list, suggested: list) -> dict:
+        return ConversationTurn(
+            session_id=session_id,
+            user_message=user_query,
+            model_response=reply_text,
+            time_taken_ms=int((time.time() - start_time) * 1000),
+            routing_decision=routing_decision,
+            embeddings_info=embeddings_info,
+            docs_retrieved=docs,
+            tools_executed=tools_exec,
+            history_context=snapshot_history,
+            suggested_actions=suggested
+        ).model_dump()
+
     # Guardrail: Immediate short-circuit if Out of Scope
     if classification == "OUT_OF_SCOPE":
+        reply_out = "I apologize, but I am currently scoped exclusively to the Real Estate Rate Monitor page. I cannot assist with other topics like lead generation, pricing automation, or general knowledge outside of real estate data."
         return {
-            "reply": "I apologize, but I am currently scoped exclusively to the Real Estate Rate Monitor page. I cannot assist with other topics like lead generation, pricing automation, or general knowledge outside of real estate data.",
+            "reply": reply_out,
             "path_used": "OUT_OF_SCOPE",
             "tools_called": [],
-            "suggested_actions": []
+            "suggested_actions": [],
+            "telemetry": build_telemetry(reply_out, [], [], [])
         }
 
     if classification == "GREETING":
+        reply_greeting = "Hello! I'm the Joule Dynamics Real Estate Intelligence Assistant. I can help you with rate spikes, market trends, and availability data. How can I assist you today?"
         return {
-            "reply": "Hello! I'm the Joule Dynamics Real Estate Intelligence Assistant. I can help you with rate spikes, market trends, and availability data. How can I assist you today?",
+            "reply": reply_greeting,
             "path_used": "GREETING",
             "tools_called": [],
-            "suggested_actions": []
+            "suggested_actions": [],
+            "telemetry": build_telemetry(reply_greeting, [], [], [])
         }
 
     tool_results = []
@@ -178,7 +209,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
             else:
                 db_result = await execute_tool_rpc(func_name, func_args)
                 
-            tool_results.append({"tool": func_name, "args": func_args})
+            tool_results.append(ToolExecution(tool_name=func_name, args=func_args, db_response=db_result))
 
             messages.append({
                 "tool_call_id": tool_call.id,
@@ -220,6 +251,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     return {
         "reply": final_reply,
         "path_used": classification,
-        "tools_called": tool_results,
-        "suggested_actions": suggested_actions
+        "tools_called": [{"tool": t.tool_name, "args": t.args} for t in tool_results],
+        "suggested_actions": suggested_actions,
+        "telemetry": build_telemetry(final_reply, tool_results, rag_chunks, suggested_actions)
     }
