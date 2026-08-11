@@ -73,7 +73,7 @@ REAL_ESTATE_TOOLS = [
                         "description": "Period to analyse in days (7–90)",
                     },
                 },
-                "required": ["market"],
+                "required": ["p_market"],
             },
         },
     },
@@ -86,12 +86,12 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "threshold": {
+                    "threshold_param": {
                         "type": "number",
                         "default": 25.0,
                         "description": "Minimum absolute % deviation from 7-day trailing average",
                     },
-                    "days": {
+                    "days_param": {
                         "type": "integer",
                         "default": 7,
                         "description": "Lookback window in days",
@@ -124,7 +124,7 @@ REAL_ESTATE_TOOLS = [
                         "description": "Minimum absolute % deviation to qualify as anomaly",
                     },
                 },
-                "required": ["property_search"],
+                "required": ["p_property_search"],
             },
         },
     },
