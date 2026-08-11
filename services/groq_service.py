@@ -1,14 +1,17 @@
+import csv
+import io
 import json
 import re
 import os
 import time
+import requests
 import numpy as np
 from groq import Groq
 from services.tools import REAL_ESTATE_TOOLS
 from services.supabase_service import execute_tool_rpc, search_methodology_rag
 from services.embedding_service import get_embedding_model
 from services.observability import setup_logger
-from config import GROQ_API_KEY
+from config import GROQ_API_KEY, MAPBOX_ACCESS_TOKEN
 from langfuse import observe, propagate_attributes, get_client
 import langfuse
 
@@ -53,7 +56,7 @@ IMMUTABLE SYSTEM BOUNDARIES & HARD FACTS:
 1. TRACKED MARKETS: You ONLY track two markets: 'NYC/NJ Metro' and 'Miami'. 
 2. TRACKED PLATFORMS: You ONLY track two platforms: 'Airbnb' (Active daily tracking) and 'Vrbo' (Historical data only).
 3. ABSOLUTE FORBIDDEN ENTITIES: You must NEVER list, suggest, or mention any other cities (e.g., Los Angeles, Chicago, Houston, Orlando) or other booking platforms (e.g., Booking.com, Expedia, Tripadvisor). If asked about them, state plainly that they are outside Joule Dynamics' current tracking scope.
-4. ZERO FABRICATION: Every single price, rate change percentage, property count, and availability status MUST come directly from a returned tool output JSON. If a tool returns no data or an error, state: "I don't have that information in the current real estate scope."
+4. ZERO FABRICATION: Every single price, rate change percentage, property count, and availability status MUST come directly from a returned tool output. If a tool returns no data or an error, state: "I don't have that information in the current real estate scope."
 5. NO RAW SQL: Never attempt to write or generate SQL queries. Rely strictly on the registered tool RPCs provided.
 
 OPERATIONAL RULES:
@@ -65,7 +68,179 @@ OPERATIONAL RULES:
 ```json
 {"clarification_options": ["Option A", "Option B"]}
 ```
+6. ADVISORY & STRATEGY RESPONSES: When a user asks for pricing recommendations, competitive strategy, or "what should I do?" guidance, you MUST use a strict two-part structure:
+
+   **What the data shows:** (grounded section)
+   Present only facts derived directly from tool outputs. Use precise numbers. Format as a table or bullet list.
+
+   **Suggested approach (data-informed):** (reasoned section)
+   Offer strategic interpretation based on the data patterns above. Be specific but clearly frame this as inference from data, not a certainty.
+
+   Every advisory response MUST close with this disclaimer on its own line:
+   > ⚠️ *This is a data-informed observation, not professional pricing or financial advice. Consult a revenue management specialist for investment decisions.*
+
+   NEVER present a strategic recommendation with the same flat, factual confidence as a queried data point. The boundary between retrieved fact and model reasoning must always be explicit and visible to the user.
 """
+
+# ─── PAYLOAD COMPRESSOR ────────────────────────────────────────────────────────
+# MAX rows the LLM receives from any single tool call. Beyond this, data is
+# sliced and the LLM is told to recommend narrowing filters.
+_MAX_ROWS = 50
+
+
+def compress_tool_output(func_name: str, db_result: dict) -> str:
+    """
+    Converts raw tool RPC responses into a token-efficient string for LLM context.
+    
+    Three-step compression pipeline:
+    1. Metadata hoisting — keys with identical values across all rows extracted
+       to a single header line, removing them from every row.
+    2. Null stripping — any key with a null/None value in a row is omitted.
+    3. CSV rendering — remaining data written as CSV (headers once, values compact).
+    
+    For non-tabular (scalar/dict) results, returns a minimal string representation.
+    Estimated reduction: 70–90% vs raw JSON for time-series data.
+    """
+    if db_result.get("status") != "success":
+        msg = db_result.get("message", "unknown error")
+        return f"Tool '{func_name}' error: {msg}"
+
+    data = db_result.get("data")
+
+    # ── Scalar / single-object results ──────────────────────────────────────
+    if data is None:
+        return f"Tool '{func_name}': no data returned."
+
+    if isinstance(data, (str, int, float, bool)):
+        return f"Tool '{func_name}' result: {data}"
+
+    if isinstance(data, dict):
+        # Already a compact object (e.g. get_rate_anomaly_report, get_market_trend)
+        # Just serialise cleanly — these are already small
+        return f"Tool '{func_name}' result:\n{json.dumps(data, default=str)}"
+
+    if not isinstance(data, list) or len(data) == 0:
+        return f"Tool '{func_name}': empty result."
+
+    # ── List of rows ─────────────────────────────────────────────────────────
+    # Filter out rows where everything is None (pure null rows add no signal)
+    data = [row for row in data if isinstance(row, dict) and any(v is not None for v in row.values())]
+
+    if not data:
+        return f"Tool '{func_name}': all returned rows were empty."
+
+    # Truncate before processing to cap token exposure
+    truncated = False
+    if len(data) > _MAX_ROWS:
+        data = data[:_MAX_ROWS]
+        truncated = True
+
+    # ── Step 1: Metadata hoisting ────────────────────────────────────────────
+    all_keys = list(data[0].keys())
+    hoisted = {}
+    row_keys = []
+    for key in all_keys:
+        unique_values = {str(row.get(key)) for row in data}
+        if len(unique_values) == 1:
+            val = data[0].get(key)
+            if val is not None:
+                hoisted[key] = val
+        else:
+            row_keys.append(key)
+
+    header_parts = [f"{k}={v}" for k, v in hoisted.items()]
+    header_str = f"[{', '.join(header_parts)}]\n" if header_parts else ""
+
+    # ── Step 2 & 3: Null-strip + CSV ─────────────────────────────────────────
+    # Determine which row-level keys have at least one non-null value across all rows
+    active_keys = [k for k in row_keys if any(row.get(k) is not None for row in data)]
+
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(active_keys)
+    for row in data:
+        writer.writerow([row.get(k) for k in active_keys])
+
+    truncation_notice = (
+        f"\n[Truncated to {_MAX_ROWS} rows. Advise user to narrow date range or add filters.]"
+        if truncated else ""
+    )
+    return f"{header_str}{buf.getvalue().strip()}{truncation_notice}"
+
+
+# ─── GEOCODE HANDLER (Python-side, Mapbox API) ────────────────────────────────
+
+def geocode_address_handler(address: str) -> dict:
+    """
+    Resolves a free-text address to lat/lng via the Mapbox Geocoding API.
+    Handles network failures, API errors, and empty results gracefully.
+    US-only results, single best match returned.
+    """
+    if not MAPBOX_ACCESS_TOKEN:
+        return {
+            "status": "error",
+            "message": "We are unable to geocode addresses at this time — the mapping service is not configured."
+        }
+    if not address or not address.strip():
+        return {"status": "error", "message": "No address was provided to geocode."}
+
+    url = "https://api.mapbox.com/search/geocode/v6/forward"
+    params = {
+        "q": address.strip(),
+        "access_token": MAPBOX_ACCESS_TOKEN,
+        "country": "US",
+        "limit": 1
+    }
+
+    try:
+        response = requests.get(url, params=params, timeout=6)
+        response.raise_for_status()
+        data = response.json()
+
+        features = data.get("features", [])
+        if not features:
+            return {
+                "status": "error",
+                "message": f"We are unable to locate coordinates for '{address}' at this time. Please try a more specific address or city name."
+            }
+
+        feature = features[0]
+        lon, lat = feature["geometry"]["coordinates"]
+        resolved = feature.get("properties", {}).get("full_address", address)
+        return {
+            "status": "success",
+            "latitude": round(lat, 6),
+            "longitude": round(lon, 6),
+            "resolved_address": resolved
+        }
+
+    except requests.exceptions.Timeout:
+        logger.error(f"Mapbox geocode timeout for address: {address}")
+        return {
+            "status": "error",
+            "message": "We are unable to geocode this address at this time — the mapping service timed out. Please try again shortly."
+        }
+    except requests.exceptions.HTTPError as e:
+        logger.error(f"Mapbox geocode HTTP error {e.response.status_code} for: {address}")
+        return {
+            "status": "error",
+            "message": "We are unable to geocode this address at this time due to a service error. Please try again later."
+        }
+    except requests.exceptions.RequestException as e:
+        logger.error(f"Mapbox geocode request failed for '{address}': {e}")
+        return {
+            "status": "error",
+            "message": "We are unable to reach the mapping service at this time. Please try again later."
+        }
+    except (KeyError, IndexError, ValueError) as e:
+        logger.error(f"Mapbox geocode parsing error for '{address}': {e}")
+        return {
+            "status": "error",
+            "message": f"We are unable to parse the location for '{address}'. Please try a more specific address."
+        }
+
+
+# ─── MAIN CHAT HANDLER ────────────────────────────────────────────────────────
 
 @observe(name="process-chat")
 async def process_chat_message(user_query: str, session_id: str, session_context: dict) -> dict:
@@ -101,7 +276,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     router_sys_prompt = ROUTER_PROMPT + pre_check_hint
     router_messages = [{"role": "system", "content": router_sys_prompt}]
     
-    # To save tokens on routing, only include the last 4 messages of history
+    # Router only needs last 4 history messages — cheap model, keep it lean
     router_messages.extend(session_history[session_id][-4:])
     router_messages.append({"role": "user", "content": user_query})
 
@@ -114,7 +289,6 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     
     routing = json.loads(router_res.choices[0].message.content)
     
-    # Handle cases where the LLM might unexpectedly return a JSON array instead of an object
     if isinstance(routing, list) and len(routing) > 0:
         routing = routing[0]
     elif not isinstance(routing, dict):
@@ -126,7 +300,6 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         classification = "PATH_A"
 
     get_client().update_current_span(metadata={"classification": classification, "reason": reason})
-    snapshot_history = session_history[session_id].copy() if session_id in session_history else []
 
     # Guardrail: Immediate short-circuit if Out of Scope
     if classification == "OUT_OF_SCOPE":
@@ -140,7 +313,7 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         }
 
     if classification == "GREETING":
-        reply_greeting = "Hello! I'm the Joule Dynamics Real Estate Intelligence Assistant. I can help you with rate spikes, market trends, and availability data. How can I assist you today?"
+        reply_greeting = "Hello! I'm the Joule Dynamics Real Estate Intelligence Assistant. I can help you with rate spikes, market trends, property investigations, and availability data. How can I assist you today?"
         get_client().update_current_span(output=reply_greeting)
         return {
             "reply": reply_greeting,
@@ -160,7 +333,8 @@ async def process_chat_message(user_query: str, session_id: str, session_context
         {"role": "system", "content": SYNTHESIS_PROMPT}
     ]
 
-    messages.extend(session_history[session_id])
+    # Cap history at 6 messages to avoid token inflation in multi-turn sessions
+    messages.extend(session_history[session_id][-6:])
 
     user_msg_content = f"User Context Filters: {json.dumps(session_context)}\nUser Query: {user_query}"
     messages.append({"role": "user", "content": user_msg_content})
@@ -191,20 +365,29 @@ async def process_chat_message(user_query: str, session_id: str, session_context
             func_name = tool_call.function.name
             func_args = json.loads(tool_call.function.arguments)
             
+            # ── Python-side tool handlers (not routed to Supabase) ──────────
             if func_name == "generate_data_export":
                 from services.appwrite_service import upload_document_to_appwrite
                 url = await upload_document_to_appwrite(func_args.get("content", ""), func_args.get("format", "md"))
                 db_result = {"status": "success", "url": url}
+
+            elif func_name == "geocode_address":
+                # Mapbox API call handled in Python — never hits Supabase
+                db_result = geocode_address_handler(func_args.get("address", ""))
+
             else:
                 db_result = await execute_tool_rpc(func_name, func_args)
                 
             tool_results.append({"tool": func_name, "args": func_args})
 
+            # ── Payload compression before entering LLM context ─────────────
+            compressed_content = compress_tool_output(func_name, db_result)
+
             messages.append({
                 "tool_call_id": tool_call.id,
                 "role": "tool",
                 "name": func_name,
-                "content": json.dumps(db_result)
+                "content": compressed_content
             })
 
         # Second Brain Call to Synthesize Final Output
@@ -218,10 +401,10 @@ async def process_chat_message(user_query: str, session_id: str, session_context
     else:
         final_reply = response_message.content
 
-    # Track assistant reply in history
+    # Track assistant reply in history — cap at 6 to prevent token creep
     session_history[session_id].append({"role": "assistant", "content": final_reply})
-    if len(session_history[session_id]) > 20:
-        session_history[session_id] = session_history[session_id][-20:]
+    if len(session_history[session_id]) > 6:
+        session_history[session_id] = session_history[session_id][-6:]
 
     # Parse clarification options
     suggested_actions = []

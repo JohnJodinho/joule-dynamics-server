@@ -11,3 +11,5 @@ APP_WRITE_PROJECT_ID = os.environ.get("APP_WRITE_PROJECT_ID", "")
 APP_WRITE_API_ENDPOINT = os.environ.get("APP_WRITE_API_ENDPOINT", "")
 APP_WRITE_API_KEY = os.environ.get("APP_WRITE_API_KEY", "")
 APP_WRITE_BUCKET_ID = os.environ.get("APP_WRITE_BUCKET_ID", "")
+
+MAPBOX_ACCESS_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
