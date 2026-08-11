@@ -10,8 +10,8 @@ REAL_ESTATE_TOOLS = [
         "function": {
             "name": "get_dashboard_kpis",
             "description": "Fetch overall Real Estate Rate Monitor KPIs: tracked property count, 7-day rate changes, spike count, and scrape health status per platform. Use for general 'how is the system doing?' or market health questions.",
-            "parameters": {"type": "object", "properties": {}, "required": []}
-        }
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
     },
     {
         "type": "function",
@@ -21,11 +21,14 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {"type": "string", "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'. Omit to get all markets."}
+                    "market_param": {
+                        "type": "string",
+                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'. Omit to get all markets.",
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -35,13 +38,22 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {"type": "string", "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'"},
-                    "start_date": {"type": "string", "description": "Start date, YYYY-MM-DD"},
-                    "end_date": {"type": "string", "description": "End date, YYYY-MM-DD"}
+                    "p_market": {
+                        "type": "string",
+                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'",
+                    },
+                    "p_start_date": {
+                        "type": "string",
+                        "description": "Start date, YYYY-MM-DD",
+                    },
+                    "p_end_date": {
+                        "type": "string",
+                        "description": "End date, YYYY-MM-DD",
+                    },
                 },
-                "required": ["market", "start_date", "end_date"]
-            }
-        }
+                "required": ["p_market", "p_start_date", "p_end_date"],
+            },
+        },
     },
     {
         "type": "function",
@@ -51,14 +63,20 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {"type": "string", "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'"},
-                    "days": {"type": "integer", "default": 14, "description": "Period to analyse in days (7–90)"}
+                    "p_market": {
+                        "type": "string",
+                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'",
+                    },
+                    "p_days": {
+                        "type": "integer",
+                        "default": 14,
+                        "description": "Period to analyse in days (7–90)",
+                    },
                 },
-                "required": ["market"]
-            }
-        }
+                "required": ["market"],
+            },
+        },
     },
-
     # ─── SPIKE & ANOMALY DETECTION ───────────────────────────────────────────
     {
         "type": "function",
@@ -68,12 +86,20 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "threshold": {"type": "number", "default": 25.0, "description": "Minimum absolute % deviation from 7-day trailing average"},
-                    "days": {"type": "integer", "default": 7, "description": "Lookback window in days"}
+                    "threshold": {
+                        "type": "number",
+                        "default": 25.0,
+                        "description": "Minimum absolute % deviation from 7-day trailing average",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "default": 7,
+                        "description": "Lookback window in days",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -83,13 +109,24 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_search": {"type": "string", "description": "Property name or UUID"},
-                    "days_param": {"type": "integer", "default": 30, "description": "Lookback window in days (max 90)"},
-                    "deviation_threshold": {"type": "number", "default": 25.0, "description": "Minimum absolute % deviation to qualify as anomaly"}
+                    "p_property_search": {
+                        "type": "string",
+                        "description": "Property name or UUID",
+                    },
+                    "p_days": {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Lookback window in days (max 90)",
+                    },
+                    "p_deviation_threshold": {
+                        "type": "number",
+                        "default": 25.0,
+                        "description": "Minimum absolute % deviation to qualify as anomaly",
+                    },
                 },
-                "required": ["property_search"]
-            }
-        }
+                "required": ["property_search"],
+            },
+        },
     },
     {
         "type": "function",
@@ -99,15 +136,25 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {"type": "string", "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')"},
-                    "days": {"type": "integer", "default": 14, "description": "Period to analyse in days"},
-                    "limit": {"type": "integer", "default": 5, "description": "Number of top results to return (max 10)"}
+                    "market": {
+                        "type": "string",
+                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                    },
+                    "days": {
+                        "type": "integer",
+                        "default": 14,
+                        "description": "Period to analyse in days",
+                    },
+                    "limit": {
+                        "type": "integer",
+                        "default": 5,
+                        "description": "Number of top results to return (max 10)",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
-
     # ─── PROPERTY-SPECIFIC QUERIES ───────────────────────────────────────────
     {
         "type": "function",
@@ -117,11 +164,14 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_search": {"type": "string", "description": "Property name or UUID"}
+                    "property_search": {
+                        "type": "string",
+                        "description": "Property name or UUID",
+                    }
                 },
-                "required": ["property_search"]
-            }
-        }
+                "required": ["property_search"],
+            },
+        },
     },
     {
         "type": "function",
@@ -131,15 +181,32 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_search": {"type": "string", "description": "Property name or UUID (required)"},
-                    "days_param": {"type": "integer", "default": 14, "description": "Rolling lookback window in days (max 30). Ignored if start_date/end_date are provided."},
-                    "compare_window_days": {"type": "integer", "default": 1, "description": "Days to compare against for pct_change_vs_prev (max 14)"},
-                    "start_date": {"type": "string", "description": "Optional explicit start date YYYY-MM-DD. Use instead of days_param when user gives a specific date range."},
-                    "end_date": {"type": "string", "description": "Optional explicit end date YYYY-MM-DD. Must be provided together with start_date."}
+                    "property_search": {
+                        "type": "string",
+                        "description": "Property name or UUID (required)",
+                    },
+                    "days_param": {
+                        "type": "integer",
+                        "default": 14,
+                        "description": "Rolling lookback window in days (max 30). Ignored if start_date/end_date are provided.",
+                    },
+                    "compare_window_days": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "Days to compare against for pct_change_vs_prev (max 14)",
+                    },
+                    "start_date": {
+                        "type": "string",
+                        "description": "Optional explicit start date YYYY-MM-DD. Use instead of days_param when user gives a specific date range.",
+                    },
+                    "end_date": {
+                        "type": "string",
+                        "description": "Optional explicit end date YYYY-MM-DD. Must be provided together with start_date.",
+                    },
                 },
-                "required": ["property_search"]
-            }
-        }
+                "required": ["property_search"],
+            },
+        },
     },
     {
         "type": "function",
@@ -152,14 +219,13 @@ REAL_ESTATE_TOOLS = [
                     "property_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "2–5 property names or UUIDs to compare side-by-side"
+                        "description": "2–5 property names or UUIDs to compare side-by-side",
                     }
                 },
-                "required": ["property_ids"]
-            }
-        }
+                "required": ["property_ids"],
+            },
+        },
     },
-
     # ─── SEARCH & FILTERING ───────────────────────────────────────────────────
     {
         "type": "function",
@@ -169,16 +235,35 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "p_search": {"type": "string", "description": "Search text (property name or UUID)"},
-                    "p_market": {"type": "string", "description": "Market region name (e.g. 'Miami' or 'NYC/NJ Metro')"},
-                    "p_platform": {"type": "string", "description": "Platform filter (e.g. 'airbnb' or 'vrbo')"},
-                    "p_bedrooms": {"type": "integer", "description": "Number of bedrooms"},
-                    "p_available": {"type": "boolean", "description": "true = available only, false = unavailable only"},
-                    "p_limit": {"type": "integer", "default": 20, "description": "Results to return (max 50)"}
+                    "p_search": {
+                        "type": "string",
+                        "description": "Search text (property name or UUID)",
+                    },
+                    "p_market": {
+                        "type": "string",
+                        "description": "Market region name (e.g. 'Miami' or 'NYC/NJ Metro')",
+                    },
+                    "p_platform": {
+                        "type": "string",
+                        "description": "Platform filter (e.g. 'airbnb' or 'vrbo')",
+                    },
+                    "p_bedrooms": {
+                        "type": "integer",
+                        "description": "Number of bedrooms",
+                    },
+                    "p_available": {
+                        "type": "boolean",
+                        "description": "true = available only, false = unavailable only",
+                    },
+                    "p_limit": {
+                        "type": "integer",
+                        "default": 20,
+                        "description": "Results to return (max 50)",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -188,14 +273,19 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {"type": "string", "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')"},
-                    "platform": {"type": "string", "description": "Optional platform filter ('airbnb' or 'vrbo')"}
+                    "p_market": {
+                        "type": "string",
+                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                    },
+                    "p_platform": {
+                        "type": "string",
+                        "description": "Optional platform filter ('airbnb' or 'vrbo')",
+                    },
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
-
     # ─── GEO / LOCATION ──────────────────────────────────────────────────────
     {
         "type": "function",
@@ -205,11 +295,14 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "address": {"type": "string", "description": "Street address, city, or general location text supplied by the user (US locations only)"}
+                    "address": {
+                        "type": "string",
+                        "description": "Street address, city, or general location text supplied by the user (US locations only)",
+                    }
                 },
-                "required": ["address"]
-            }
-        }
+                "required": ["address"],
+            },
+        },
     },
     {
         "type": "function",
@@ -219,14 +312,28 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "latitude": {"type": "number", "description": "Latitude of search center"},
-                    "longitude": {"type": "number", "description": "Longitude of search center"},
-                    "radius_km": {"type": "number", "default": 5.0, "description": "Search radius in kilometres (max 20)"},
-                    "limit": {"type": "integer", "default": 10, "description": "Max results to return (max 20)"}
+                    "p_latitude": {
+                        "type": "number",
+                        "description": "Latitude of search center",
+                    },
+                    "p_longitude": {
+                        "type": "number",
+                        "description": "Longitude of search center",
+                    },
+                    "p_radius_km": {
+                        "type": "number",
+                        "default": 5.0,
+                        "description": "Search radius in kilometres (max 20)",
+                    },
+                    "p_limit": {
+                        "type": "integer",
+                        "default": 10,
+                        "description": "Max results to return (max 20)",
+                    },
                 },
-                "required": ["latitude", "longitude"]
-            }
-        }
+                "required": ["latitude", "longitude"],
+            },
+        },
     },
     {
         "type": "function",
@@ -236,14 +343,19 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_a_id": {"type": "string", "description": "UUID of the first property"},
-                    "property_b_id": {"type": "string", "description": "UUID of the second property"}
+                    "property_a_id": {
+                        "type": "string",
+                        "description": "UUID of the first property",
+                    },
+                    "property_b_id": {
+                        "type": "string",
+                        "description": "UUID of the second property",
+                    },
                 },
-                "required": ["property_a_id", "property_b_id"]
-            }
-        }
+                "required": ["property_a_id", "property_b_id"],
+            },
+        },
     },
-
     # ─── TRACKING & SYSTEM META ───────────────────────────────────────────────
     {
         "type": "function",
@@ -253,11 +365,14 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "p_platform": {"type": "string", "description": "Optional platform filter (e.g. 'Airbnb' or 'Vrbo')"}
+                    "p_platform": {
+                        "type": "string",
+                        "description": "Optional platform filter (e.g. 'Airbnb' or 'Vrbo')",
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
     {
         "type": "function",
@@ -267,13 +382,16 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "days": {"type": "integer", "default": 30, "description": "Lookback window in days"}
+                    "p_days": {
+                        "type": "integer",
+                        "default": 30,
+                        "description": "Lookback window in days",
+                    }
                 },
-                "required": []
-            }
-        }
+                "required": [],
+            },
+        },
     },
-
     # ─── DATA EXPORT ─────────────────────────────────────────────────────────
     {
         "type": "function",
@@ -283,11 +401,17 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "format": {"type": "string", "description": "Export format: 'csv' or 'md'"},
-                    "content": {"type": "string", "description": "Full text content or CSV data to export"}
+                    "format": {
+                        "type": "string",
+                        "description": "Export format: 'csv' or 'md'",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "Full text content or CSV data to export",
+                    },
                 },
-                "required": ["format", "content"]
-            }
-        }
-    }
+                "required": ["format", "content"],
+            },
+        },
+    },
 ]
