@@ -1,145 +1,111 @@
 [
   {
-    "section_title": "Calculation Formulas: 7-Day Trailing Average",
-    "chunk_content": "The '7-day trailing average' acts as the pricing baseline for all volatility tracking. Mathematically, it is calculated by taking the mean of a property's nightly rates over a 7-day lookback window. Crucially, this window strictly excludes the current day to ensure that incomplete intraday scraping does not skew the baseline."
+    "section_title": "7-Day Trailing Average — Calculation",
+    "chunk_content": "The 7-day trailing average is a property's pricing baseline. It is calculated as the mean of that property's daily-average nightly rate across the 6 calendar days immediately before the current day — one aggregated value per day, not one value per scrape (properties are scraped 4 times a day, so 'day' and 'scrape' are not the same unit). The current day is always excluded from its own baseline, so incomplete intraday scraping never skews the number."
   },
   {
-    "section_title": "Threshold Definitions: Volatility and Spike Alerts",
-    "chunk_content": "Pricing anomalies, or 'spikes', are mathematically triggered when a property's current nightly rate deviates significantly from its 7-day trailing average. By default, the system flags a spike alert if the absolute percentage deviation is greater than or equal to 25%."
+    "section_title": "Pricing Anomalies / Spike Alerts — Threshold",
+    "chunk_content": "A pricing anomaly (spike alert) triggers when a property's current nightly rate deviates by 25% or more, in either direction, from its own 7-day trailing average — a surge and a drop both count. This is an absolute percentage deviation, not a directional-only threshold."
   },
   {
-    "section_title": "System Limits: Search and History Windows",
-
-    "chunk_content": "When interacting with the data, property searches will return a maximum of 200 properties at a time. For historical rate tracking, you can look back up to 90 days of history, and compare current rates to past rates up to 14 days ago."
-  },
-  {
-    "section_title": "Global Filters Behavior",
-    "chunk_content": "The Real Estate Rate Monitor page utilizes several global filters to drill down into the data: \n- **Market**: Filters the properties by geographic region (e.g., 'Miami', 'NYC'). \n- **Platform**: Filters properties by listing platform (e.g., 'Airbnb', 'Vrbo'). \n- **Status**: Allows filtering by 'Currently Tracked' (active properties), 'Untracked/Removed' (inactive properties), or 'All Historical' to include everything. \n- **Bedrooms**: Filters properties to match an exact bedroom count. \n- **Stay Dates**: A date range picker ('Start Date' to 'End Date') that filters properties where the check-in 'Stay Date' falls within the selected window. All filters dynamically recalculate the underlying dataset and update the KPIs, maps, and charts in real-time."
-  },
-  {
-    "section_title": "Dashboard KPIs",
-    "chunk_content": "The top-level Key Performance Indicators (KPIs) update dynamically based on the active global filters: \n- **Properties Tracked**: Displays the count of unique properties that match the current filters. \n- **Rate Changes (7D)**: Represents the total number of nightly rate changes detected across all tracked properties over the last 7 days. \n- **25%+ Spikes (7D)**: Represents the count of 'Pricing Anomalies', defined as instances where a property's current nightly rate deviates by 25% or more (either surging up or dropping down) from its own 7-day trailing average, recorded within the last 7 days."
-  },
-  {
-    "section_title": "Visual Indicators and Tooltips",
-    "chunk_content": "There is use specific visual rules to convey property health and status: \n- **Map Colors**: On the geographic map, an Orange marker indicates an 'Active' and available property with normal pricing. An Amber marker indicates a 'Pricing Anomaly' (a rate deviation >= 25% from its average). A Gray marker indicates the property is 'Unavailable' for the tracked dates. \n- **Stale Badge**: If the latest data point for a property is older than 24 hours, the UI fades the row to 60% opacity, labels it 'Stale', and displays 'YES (STALE)' under availability. \n- **Unavailable Tooltip**: When a property is unavailable, a tooltip clarifies: 'Reflects a 2-night stay starting today rather than the property's full calendar. Other dates may still be bookable.' \n- **Sparklines**: If a property is currently unavailable, the 'Rate' column renders a mini line chart (sparkline) showing the trajectory of its last 5 known prices."
-  },
-  {
-    "section_title": "Chart Logic: Nightly Rate History",
-    "chunk_content": "The 'Nightly Rate History' interactive line chart visualizes the pricing trend for a single selected property over time. It plots two distinct series: \n1. **Solid Line (Primary Color)**: The actual 'Nightly Rate' recorded at specific scrape times. \n2. **Dashed Line (Gray/Muted)**: The '7-day Trailing Avg', serving as a benchmark to easily spot when the current rate is surging or dropping below historical norms."
-  },
-  {
-    "section_title": "Property Rate Snapshot Table",
-    "chunk_content": "The snapshot table lists the latest recorded status for properties matching the filters. Its columns include: \n- **Property**: Name and an external link to the live listing. \n- **Market / Platform**: The geographic market and booking site. \n- **Beds / Rating**: Bedroom count, star rating out of 5.0, and total review count. \n- **Stay Date**: The specific check-in date being tracked. \n- **Rate**: The current nightly rate. If unavailable, it shows a sparkline of the last 5 known prices instead. \n- **vs 7d Avg**: The percentage difference between the current rate and the 7-day average. Positive values are green, negative values are red, and deviations >= 25% turn amber and bold. \n- **Avail.**: Shows 'YES', 'NO', or 'YES (STALE)'. \n- **Last Checked**: Human-readable time since the property was last scraped (e.g., '15m ago' or 'As of Aug 8')."
-  },
-  {
-    "section_title": "Scraping Frequency",
-    "chunk_content": "Listings are monitored exactly four times per day. This frequent checking ensures that we capture any short-term price adjustments and booking status changes throughout the daily cycle."
+    "section_title": "Scrape Cadence & Data Refresh",
+    "chunk_content": "Listings are scraped 4 times per day to capture short-term rate and availability changes throughout the day."
   },
   {
     "section_title": "Stale Data Status",
-    "chunk_content": "A property is flagged as 'Stale' if our system fails to fetch new pricing information for over 12 hours. This acts as an immediate warning that the data displayed may no longer reflect the live market conditions."
+    "chunk_content": "A property is flagged 'Stale' if the system has not successfully fetched fresh pricing for over 24 hours. The UI fades the row to 60% opacity and shows 'YES (STALE)' under availability. A prolonged Stale status usually reflects a scraping failure (network error, site change, or an access block), not that the listing became available again."
   },
   {
-    "section_title": "2-Night Minimum Booking Rule",
-    "chunk_content": "The system defines a property as 'Unavailable' if it does not have a consecutive two-night opening starting from the current date. We enforce a two-night check-in window because most premium short-term rentals require a minimum two-night stay, rendering single-night gaps essentially unbookable for our target audience."
+    "section_title": "Unavailable / 2-Night Window Definition",
+    "chunk_content": "The system checks each listing for a consecutive 2-night opening starting from the current date only — it does not scan the full upcoming calendar. A property is marked 'Unavailable' if that specific 2-night window is not open, even if other dates further out are bookable. This 2-night rule was chosen because most premium short-term rentals require a minimum stay, making single-night gaps effectively unbookable. This is an immediate demand-tightness signal, not a full occupancy calculation — the system cannot currently determine whether a date further in the future is booked."
   },
   {
-    "section_title": "Lookahead Calendar Limits",
-    "chunk_content": "Our availability checks do not scan the entire upcoming calendar year. Instead, they focus strictly on immediate, short-term availability (the upcoming 2-night window) to gauge current market tightness and sudden surges in demand."
-  },
-  {
-    "section_title": "Primary Tracking Markets",
-    "chunk_content": "We actively track and monitor properties in two primary markets: the Miami area and the New York City/New Jersey Metro region. These locations were selected due to their high volume of short-term rentals and volatile pricing dynamics."
-  },
-  {
-    "section_title": "2026 World Cup Strategy",
-    "chunk_content": "Our strategic focus on the Miami and NYC/NJ Metro markets was directly tied to the 2026 FIFA World Cup Final. By monitoring these specific areas, we captured early rate surges, supply constraints, and pricing anomalies as demand built for the event."
-  },
-  {
-    "section_title": "Active Platform Monitoring",
-    "chunk_content": "Airbnb is our primary platform for active daily monitoring. We continuously fetch live rates and availability from Airbnb because it provides the most reliable and consistent visibility into daily pricing changes for our targeted properties."
-  },
-  {
-    "section_title": "Historical Platform Constraints",
-    "chunk_content": "Properties listed on Vrbo are currently marked as 'Historical' within our system. This is due to platform accessibility configurations that make daily automated fetching difficult. While we no longer fetch fresh daily rates from Vrbo, their past data remains visible to serve as a baseline comparison against current market trends."
-  },
-  {
-    "section_title": "Defining Pricing Anomalies",
-    "chunk_content": "A pricing anomaly occurs when a property's nightly rate suddenly deviates significantly from its recent norms. Our system specifically flags a change as an anomaly if the rate spikes or drops by 25 percent or more compared to its trailing average."
-  },
-  {
-    "section_title": "The 7-Day Trailing Average",
-    "chunk_content": "To determine what a 'normal' price is for a property, we calculate a 7-day trailing average. This means we take the mean average of the nightly rates recorded over the previous six days, creating a rolling benchmark that smooths out daily fluctuations."
-  },
-  {
-    "section_title": "Property Inactivity and Removal",
-    "chunk_content": "If a property is removed from our designated tracking list, the system automatically marks it as inactive. This ensures that our data models and averages only reflect properties that are actively managed and currently relevant to our analysis."
-  },
-  {
-    "section_title": "Handling Unavailable Pricing",
-    "chunk_content": "When a property is booked or otherwise unavailable for the target check-in window, the platform does not report a zero dollar rate. Instead, the rate is treated as a null or unknown value to prevent zero-dollar entries from artificially lowering the market averages."
+    "section_title": "Booked vs. Host-Blocked (Known Limitation)",
+    "chunk_content": "The system cannot distinguish a date that's unavailable because it's booked by a guest from one that's unavailable because the host manually blocked it. Both appear identically as 'Unavailable.' This is a structural limitation — there is no reservation-level data source — not something that will resolve with more time or data."
   },
   {
     "section_title": "Market Average Calculation",
-  
-    "chunk_content": "When calculating the average nightly rate for a specific market, the system only includes properties that are currently active and have a known, non-null nightly rate. This ensures the reported average accurately reflects the actual booking cost."
+    "chunk_content": "A market's average nightly rate only includes properties that are currently active (not removed from tracking) and have a known, non-null rate. Unavailable properties (null rate) are excluded rather than counted as zero, so they never artificially drag the average down. Stale properties are also automatically excluded from live averages and reports, so only current, actionable data is reflected."
   },
   {
     "section_title": "Discounted Rate Capture",
-    "chunk_content": "When a platform displays a discounted price (e.g., a crossed-out original price next to a lower promotional price), our system is designed to capture the final discounted amount as the actual nightly rate, ensuring our data reflects what a customer would actually pay."
+    "chunk_content": "When a listing shows a discounted price (e.g. a crossed-out original price next to a lower promotional price), the system captures the final discounted amount as the actual nightly rate — the number a customer would actually pay."
   },
   {
-    "section_title": "Host Identification and Fallbacks",
-
-    "chunk_content": "We extract the host's name or profile identifier for each listing to track multi-property operators. If the host's name is not readily available in the standard data structure, the system uses alternative methods to locate and save the host's profile link for later analysis."
+    "section_title": "Host Identification & Multi-Property Tracking",
+    "chunk_content": "The system extracts each listing's host name or profile identifier to help identify multi-property operators. If a host name isn't available in the standard page structure, it falls back to locating the host's profile link instead."
   },
   {
-    "section_title": "Property Key Grouping",
-    "chunk_content": "To prevent duplicate counting, our system uses a unique property key to group listings that represent the exact same physical rental unit, even if that unit is listed across multiple different booking platforms."
+    "section_title": "Property Key Grouping (De-duplication)",
+    "chunk_content": "A unique property key groups listings that represent the same physical rental unit even when it's listed across multiple platforms, so the same property is never double-counted in totals or averages."
   },
   {
-    "section_title": "Rate Volatility Tracking",
-    "chunk_content": "We maintain a dedicated view of rate volatility that compares the current recorded rate of every property against its 7-day historical benchmark. This allows analysts to instantly sort and identify the most aggressive price changes in a market."
+    "section_title": "Consecutive Failure Handling",
+    "chunk_content": "Repeated 'not found' errors on a listing increment a failure counter, which helps distinguish a temporary network glitch from a listing that's been permanently removed by its host."
   },
   {
-    "section_title": "Consecutive Failure Tolerance",
-    "chunk_content": "If the system repeatedly encounters \"not found\" errors when attempting to view a property, it increments a failure counter. This helps distinguish between a temporary network glitch and a property that has been permanently removed by the host."
-  },
-  {
-    "section_title": "Event-Driven Rate Surges",
-    "chunk_content": "The system expects to see significant, sudden rate surges in localized geographic pockets. By isolating data to specific markets like Miami and NYC, analysts can attribute these surges to major events, such as the World Cup, rather than seasonal trends."
-  },
-  {
-    "section_title": "Missing Data Prevention",
-    "chunk_content": "To maintain data integrity, any automated extraction that fails to find standard pricing formats will escalate to a secondary analysis method. This ensures we maximize our data capture rate even when booking platforms subtly change their page layouts."
+    "section_title": "Extraction Fallback Method",
+    "chunk_content": "If the standard price-extraction method fails to find a recognizable pricing format (e.g., a platform changed its page layout), the system escalates to a secondary extraction method to maximize successful data capture."
   },
   {
     "section_title": "Data Isolation by Platform",
-    "chunk_content": "While we monitor multiple listing sites, data is strictly categorized by platform. This prevents the distinct pricing algorithms, fees, and booking rules of Airbnb from being improperly mixed with historical data from platforms like Vrbo."
+    "chunk_content": "Pricing data is kept strictly separated by platform. Airbnb and Vrbo have different fee structures, algorithms, and booking rules, so their data is never blended together in a single average or comparison."
   },
   {
-    "section_title": "Automated Stale Record Filtering",
-    "chunk_content": "When calculating live market averages or compiling reports on active inventory, the system automatically filters out any property records marked as 'Stale'. This guarantees that decision-makers are only reviewing the most current, actionable intelligence."
+    "section_title": "Property Inactivity & Removal",
+    "chunk_content": "If a property is removed from the active tracking list, it's automatically marked inactive. Its historical data remains stored and viewable (via the 'Historical' filter), but it's excluded from live averages, KPIs, and current-state reporting."
   },
-      {
-        "section_title": "Availability & 2-Night Window Definition",
-        "chunk_content": "A listing marked as 'Unavailable' means no open booking dates were detected within a 2-night check-in window starting from the current date. The system does not look ahead across full calendar months; it tracks consecutive 2-night availability as an immediate signal."
-    },
-    {
-        "section_title": "7-Day Trailing Average Benchmark",
-        "chunk_content": "The 7-day trailing average rate is calculated per property by taking the mean nightly price recorded across the prior 6 daily scrapes. Rate volatility alerts trigger when a property's current nightly rate strays 25% or more above or below this baseline."
-    },
-    {
-        "section_title": "Scrape Cadence & Data Refresh",
-        "chunk_content": "Listings are scraped 4 times daily to capture short-term rate adjustments and booking updates. Status 'Stale' indicates a scraper job failed to return fresh price points within the last 12 hours."
-    },
-    {
-        "section_title": "World Cup 2026 Strategic Focus",
-        "chunk_content": "The Real Estate Rate Monitor specifically tracks short-term rental inventory across NYC/NJ Metro and Miami markets to capture rate surges, supply constraints, and pricing dynamic anomalies leading up to the 2026 World Cup Final."
-    },
-    {
-        "section_title": "Vrbo Historical Tracking Status",
-        "chunk_content": "Vrbo properties are flagged as 'Historical' following platform scraping accessibility adjustments. Historical listings remain visible for baseline comparisons, but fresh daily rates are actively tracked via Airbnb endpoints."
-    }
+  {
+    "section_title": "Primary Tracking Markets",
+    "chunk_content": "The system actively tracks NYC/NJ Metro and Miami — chosen for their high volume of short-term rentals and volatile pricing, and specifically to capture rate dynamics building up to the 2026 World Cup Final. Expanding to a new market is a configuration change (adding listings to track), not a rebuild of the system."
+  },
+  {
+    "section_title": "Vrbo Historical Tracking Status",
+    "chunk_content": "Vrbo listings are marked 'Historical.' Fresh daily rates are no longer fetched from Vrbo due to a persistent access block encountered during scraping; Airbnb is the actively monitored platform going forward. Vrbo's past data remains fully visible and usable as a baseline comparison against current Airbnb trends — it was not deleted."
+  },
+  {
+    "section_title": "Global Filters",
+    "chunk_content": "The Real Estate Rate Monitor page has global filters that apply across the map, KPIs, charts, and table simultaneously: Market (region), Platform (Airbnb/Vrbo), Status (Currently Tracked / Historical / All), Bedrooms, and a Stay Date range. All filters recalculate the full page in real time."
+  },
+  {
+    "section_title": "Dashboard KPIs",
+    "chunk_content": "Properties Tracked: count of unique properties matching the active filters. Rate Changes (7D): total nightly rate changes detected across tracked properties in the last 7 days. 25%+ Spikes (7D): count of pricing anomalies (25%+ deviation from a property's own 7-day average, either direction) in the last 7 days."
+  },
+  {
+    "section_title": "Nightly Rate History Chart",
+    "chunk_content": "The chart for a selected property plots two lines: the solid line is the actual nightly rate recorded at each scrape; the dashed line is the 7-day trailing average benchmark, letting a viewer see at a glance when the current rate is surging above or dropping below its historical norm."
+  },
+  {
+    "section_title": "Property Rate Snapshot Table",
+    "chunk_content": "Columns: Property (name, links to the live listing), Market/Platform, Beds/Rating (bedroom count, star rating, review count), Stay Date, Rate (or a sparkline of the last 5 known prices if currently unavailable), vs 7d Avg (colored: green positive, red negative, bold amber if 25%+), Avail. (YES/NO/YES (STALE)), and Last Checked (time since last successful scrape)."
+  },
+  {
+    "section_title": "System Limits — Search & History",
+    "chunk_content": "Property searches return a maximum of 200 results at a time. Historical rate lookups support up to 90 days back, and rate-change comparisons can reference up to 14 days prior."
+  },
+  {
+    "section_title": "Lookahead Limitation (Known, Not Temporary)",
+    "chunk_content": "The system only ever checks pricing for a 2-night stay starting on the current day — it has never captured and cannot currently capture a future-dated price (e.g., 'what will this cost next month'). This requires a separate lookahead-scraping capability that doesn't exist yet; it is not something that resolves simply by running longer."
+
+  },
+  {
+    "section_title": "About Joule Dynamics",
+    "chunk_content": "Joule Dynamics is an AI automation agency that builds and personally maintains live systems like this one — RAG pipelines, web scraping and monitoring, lead generation, and AI automation for businesses. This Real Estate Rate Monitor is one of several live systems Joule Dynamics runs; the others include a pricing-monitor system and a lead-generation system."
+  },
+  {
+    "section_title": "What's Available Now",
+    "chunk_content": "Competitor Rate Watch is the live, working service available today: a client provides 5-10 of their own named competitor listings, and the system tracks those specific properties and alerts on price or availability changes — so a property manager knows the moment a competitor moves, instead of finding out after losing a booking."
+  },
+  {
+    "section_title": "Custom Builds Available On Request",
+    "chunk_content": "Beyond Competitor Rate Watch, Joule Dynamics builds custom data/AI products on request, tailored to a client's market and use case: Owner Acquisition Reports (revenue-potential analysis to help win new property-management contracts), Investor Yield Data (occupancy/rate trend analysis for investor-facing deals), Cross-market Arbitrage Targeting (identifying long-term rentals with strong short-term-rental upside), Comparable Market Analysis (CMA) Automation, Off-Market Deal Sourcing (flagging distressed/underpriced listings), and Portfolio Performance Dashboards (a consolidated multi-property view). These are described as available on request because they are not yet live, working features — if asked to demonstrate one, say so plainly rather than implying it already runs."
+  },
+  {
+    "section_title": "Getting In Touch",
+    "chunk_content": "A visitor interested in Competitor Rate Watch or a custom build can reach out via the WhatsApp or Email contact options on the page."
+  },
+  {
+    "section_title": "What This Demo Represents",
+    "chunk_content": "This is a real, live, working system built and operated by Joule Dynamics' founder personally — not a mature enterprise SaaS product with a large team behind it. Its scope (two markets, Airbnb-primary, a 2-night availability window) reflects genuine current capability, not a limitation being hidden. Custom builds are scoped to what's realistic to deliver, not oversold."
+  }
 ]
