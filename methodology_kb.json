@@ -90,7 +90,7 @@
   },
   {
     "section_title": "About Joule Dynamics",
-    "chunk_content": "Joule Dynamics is an AI automation agency that builds and personally maintains live systems like this one — RAG pipelines, web scraping and monitoring, lead generation, and AI automation for businesses. This Real Estate Rate Monitor is one of several live systems Joule Dynamics runs; the others include a pricing-monitor system and a lead-generation system."
+    "chunk_content": "Joule Dynamics is an AI automation agency that builds and personally maintains live systems like this one — RAG pipelines, AI Agents, Large Langchain & LlamaIndex automations, web scraping and monitoring, lead generation, and AI automation for businesses. This Real Estate Rate Monitor is one of several live systems Joule Dynamics runs."
   },
   {
     "section_title": "What's Available Now",
@@ -107,5 +107,50 @@
   {
     "section_title": "What This Demo Represents",
     "chunk_content": "This is a real, live, working system built and operated by Joule Dynamics' founder personally — not a mature enterprise SaaS product with a large team behind it. Its scope (two markets, Airbnb-primary, a 2-night availability window) reflects genuine current capability, not a limitation being hidden. Custom builds are scoped to what's realistic to deliver, not oversold."
+  },
+  
+  {
+    "section_title": "The Live Demo Explained vs. Real Client Systems",
+    "chunk_content": "The dashboard and Pulse AI assistant you see on this page are a live demonstration. We track a small, hand-picked sample of short-term rentals in Miami and the New York/New Jersey Metro area to show exactly how our technology works in real-time. Because it is a small sample, it should not be used as complete market advice for those cities. When a property manager or investor hires us, we build them a completely private, secure system. Their custom build tracks only their specific properties and their direct local competitors, keeping their business data entirely isolated and confidential."
+  },
+  {
+    "section_title": "Meet Pulse: The AI Real Estate Assistant; Pulse Capabilities",
+    "chunk_content": "Pulse is the conversational intelligence layer you can interact with on this page. Instead of using generic AI guesses, Pulse reads the actual live data on our dashboard to answer your questions. You can ask Pulse to find sudden rate spikes or crashes, calculate the average nightly rates in Miami, check the 7-day pricing trends, or rank properties by how often they change their prices. It can also map distances between properties, search for specific bedroom counts, and give you a snapshot of what percentage of listings are currently booked. Details the specific capabilities of the Pulse AI assistant based on the live Rate Monitor. Covers its ability to filter by bedrooms, calculate geography, compare rates, and spot pricing anomalies in plain English."
+  },
+  {
+    "section_title": "Managing Inquiries: The Unified Triage Engine",
+    "chunk_content": "Property managers are constantly flooded with questions across emails, WhatsApp, and social media (Scoped to Facebook and Instagram Only) at all hours. A Triage Engine connects all these different channels into one smooth, organized inbox. When a prospect reaches out, the AI instantly reads the message, checks your property data, and immediately answers routine questions—like parking rules, availability, or office hours. This cuts response times down from hours to under 30 seconds, keeping potential renters engaged while your team focuses on higher-value work."
+  },
+  {
+    "section_title": "Smart Human Handoffs and Lead Routing for Unified Triage Engine",
+    "chunk_content": "The AI is smart enough to know its limits. If a potential renter asks to negotiate a price, wants a personalized recommendation, or is ready to close a deal, the AI stops instantly and alerts your human sales team. It sends your staff a quick summary of the entire conversation so they do not have to read through long chat histories. At the same time, the AI gives the customer your direct contact card so they can easily call you, ensuring the customer never feels stuck talking to a bot."
+  },
+  {
+    "section_title": "Built-in Safety and Fair Housing Compliance",
+    "chunk_content": "Real estate professionals face strict legal liabilities, which is why a custom built AI from us has built-in safety nets. To comply fully with Fair Housing laws, the AI is strictly blocked from answering any questions about neighborhood demographics, steering tenants to specific areas, or making subjective judgments about who qualifies for a lease. It is only permitted to auto-reply to objective, factual questions. Anything requiring judgment or subjective advice is safely passed to a human team member to review."
+  },
+  {
+    "section_title": "Why Real Estate Businesses Need This in 2026",
+    "chunk_content": "Why invest in Joule Dynamics' tools? The 2026 real estate and short-term rental markets are highly competitive. Supply growth has leveled out, and travelers are waiting longer to book, creating shorter booking windows. Relying on static pricing or manual research means losing money. By using our dynamic Competitor Rate Watch, operators can spot market trends instantly and adjust prices before competitors do. Furthermore, automating late-night tenant inquiries and maintenance requests ensures a premium customer experience without needing to hire a 24/7 call center staff."
+  },
+  {
+    "section_title": "Custom Data Dashboards We Build For Clients",
+    "chunk_content": "Beyond the live demo, we build customized data tools for property managers, agents, and investors. We build 'Competitor Rate Watch' to instantly notify you when rival properties drop their prices. We design 'Owner Acquisition Reports' to help property managers prove their value and win new contracts. We also build 'Automated Comp Sheets' that gather comparable pricing data in minutes instead of hours, and systems that flag off-market, distressed properties that have been sitting unsold or dropping their prices repeatedly."
+  },
+  {
+    "section_title": "Daily Operations: Guest and Tenant Assistants",
+    "chunk_content": "Operational use cases for the Pulse intelligence pattern. Our technology goes beyond pricing—it streamlines daily property management. For short-term rentals, we build 'Guest Concierges' that answer 24/7 questions about WiFi passwords, trash days, and smart locks based entirely on your exact house manual. For multifamily apartment buildings, we build 'Leasing Assistants' that automatically answer prospect questions about pet policies, deposit structures, and floor plans, instantly qualifying renters before they ever take up your team's time for a tour."
+  },
+  {
+    "section_title": "How Rate Monitoring Increases Bookings and Revenue",
+    "chunk_content": "Most property managers change their prices by hand, but they usually do it too late—after they have already lost guests to a competitor who lowered their price first. Our live rate monitor constantly watches prices across platforms like Airbnb. It compares current prices to the past week to find unusual changes instantly. By catching these changes immediately, property managers can adjust their own prices right away. This proactive approach typically helps properties get 12 to 18 percent more bookings because they are always priced competitively."
+  },
+  {
+    "section_title": "Data Tools for Real Estate Agents and Investors",
+    "chunk_content": "When real estate agents try to pitch a property to an investor, the investor wants proof that the property will make money. Instead of relying on guesswork, our custom systems create clear, easy-to-read reports showing exactly how much similar properties are earning and how often they are booked. We also help agents find hidden opportunities—like normal, long-term rental homes that could make a lot more money if they were converted into short-term vacation rentals. This gives agents the exact numbers they need to confidently show investors a great deal."
+  },
+  {
+    "section_title": "Managing Multiple Properties Easily",
+    "chunk_content": "If you manage many properties, it can be exhausting to check every single listing one by one to see how they are doing. We solve this by building a single, simple dashboard that puts all your properties in one place. You can see your entire portfolio at a glance, instantly spotting which homes are doing well and which ones need your attention today, saving you hours of clicking around."
   }
 ]

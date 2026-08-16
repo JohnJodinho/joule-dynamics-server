@@ -415,3 +415,23 @@ REAL_ESTATE_TOOLS = [
         },
     },
 ]
+
+COMMERCIAL_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_contact_buttons",
+            "description": "Generates clickable Email and WhatsApp contact buttons. Use this whenever the user asks about hiring us, pricing, custom builds, or tracking their own portfolios. The tool returns the exact markdown syntax you must use to display the buttons.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "A personalized, plain English greeting message to pre-fill in the WhatsApp chat based on the user's inquiry (e.g., 'Hi John, I would like to discuss a custom build for my 10 properties in Miami.')."
+                    }
+                },
+                "required": ["message"],
+            },
+        },
+    }
+]

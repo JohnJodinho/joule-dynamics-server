@@ -42,11 +42,11 @@ async def upload_document_to_appwrite(content: str, format: str) -> str:
             file=InputFile.from_path(temp_path)
         )
         
-        url = f"{APP_WRITE_API_ENDPOINT}/storage/buckets/{APP_WRITE_BUCKET_ID}/files/{file_id}/view?project={APP_WRITE_PROJECT_ID}"
-        return url
+        url = f"{APP_WRITE_API_ENDPOINT}/storage/buckets/{APP_WRITE_BUCKET_ID}/files/{file_id}/download?project={APP_WRITE_PROJECT_ID}"
+        return {"status": "success", "download_url": url, "filename": filename, "format": format}
     except Exception as e:
         logger.error(f"Appwrite Upload Error: {e}")
-        return f"Error uploading file: {e}"
+        return {"status": "error", "message": f"Failed to upload export file: {str(e)}"}
     finally:
         if os.path.exists(temp_path):
             os.remove(temp_path)
