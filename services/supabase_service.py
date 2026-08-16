@@ -41,13 +41,18 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
 
     # ── Per-function validation & clamping ────────────────────────────────────
 
+    # Parameter normalization across aliases
     if func_name == "search_properties":
         # RPC: search_properties(p_search, p_market, p_platform, p_bedrooms, p_available, p_limit)
         args["p_limit"] = _clamp(args.get("p_limit"), 1, 50, default=20)
 
     elif func_name == "get_market_averages":
-        # RPC: get_market_averages(market_param)  — no p_ prefix on this older RPC
-        pass
+        # RPC: get_market_averages(market_param)
+        # Normalize market/p_market alias to market_param
+        if "p_market" in args:
+            args["market_param"] = args.pop("p_market")
+        elif "market" in args:
+            args["market_param"] = args.pop("market")
 
     elif func_name == "get_market_trend":
         # RPC: get_market_trend(p_market, p_days)
@@ -99,8 +104,9 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
             args["p_deviation_threshold"] = max(5.0, min(float(args["p_deviation_threshold"]), 100.0))
 
     elif func_name == "get_property_snapshot":
-        # RPC: get_property_snapshot(p_property_search) — no clamping needed
-        pass
+        # RPC: get_property_snapshot(p_property_search)
+        if "property_search" in args and "p_property_search" not in args:
+            args["p_property_search"] = args.pop("property_search")
 
     elif func_name == "get_distance_km":
         # RPC: get_distance_km(property_a_id, property_b_id)
@@ -117,6 +123,12 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
 
     elif func_name == "get_most_volatile_properties":
         # RPC: get_most_volatile_properties(p_market, p_days, p_limit)
+        if "market" in args and "p_market" not in args:
+            args["p_market"] = args.pop("market")
+        if "days" in args and "p_days" not in args:
+            args["p_days"] = args.pop("days")
+        if "limit" in args and "p_limit" not in args:
+            args["p_limit"] = args.pop("limit")
         args["p_days"] = _clamp(args.get("p_days"), 7, 90, default=14)
         args["p_limit"] = _clamp(args.get("p_limit"), 1, 10, default=5)
 
@@ -130,6 +142,10 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
 
     elif func_name == "get_nearby_properties":
         # RPC: get_nearby_properties(p_latitude, p_longitude, p_radius_km, p_limit)
+        if "latitude" in args and "p_latitude" not in args:
+            args["p_latitude"] = args.pop("latitude")
+        if "longitude" in args and "p_longitude" not in args:
+            args["p_longitude"] = args.pop("longitude")
         if args.get("p_latitude") is None or args.get("p_longitude") is None:
             return {
                 "status": "error",

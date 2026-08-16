@@ -21,7 +21,7 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market_param": {
+                    "p_market": {
                         "type": "string",
                         "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'. Omit to get all markets.",
                     }
@@ -136,16 +136,16 @@ REAL_ESTATE_TOOLS = [
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "market": {
+                    "p_market": {
                         "type": "string",
                         "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
                     },
-                    "days": {
+                    "p_days": {
                         "type": "integer",
                         "default": 14,
-                        "description": "Period to analyse in days",
+                        "description": "Period to analyse in days (7-90)",
                     },
-                    "limit": {
+                    "p_limit": {
                         "type": "integer",
                         "default": 5,
                         "description": "Number of top results to return (max 10)",
@@ -331,7 +331,7 @@ REAL_ESTATE_TOOLS = [
                         "description": "Max results to return (max 20)",
                     },
                 },
-                "required": ["latitude", "longitude"],
+                "required": ["p_latitude", "p_longitude"],
             },
         },
     },
