@@ -321,14 +321,39 @@ async def process_chat_message(
     router_messages.extend(session_history[session_id][-4:])
     router_messages.append({"role": "user", "content": user_query})
 
-    router_res = groq_client.chat.completions.create(
-        model=GROQ_ROUTE_MODEL,
-        messages=router_messages,
-        temperature=0.0,
-        response_format={"type": "json_object"},
-    )
-
-    routing = json.loads(router_res.choices[0].message.content)
+    try:
+        router_res = groq_client.chat.completions.create(
+            model=GROQ_ROUTE_MODEL,
+            messages=router_messages,
+            temperature=0.0,
+            max_tokens=600,
+            response_format={"type": "json_object"},
+        )
+        routing = json.loads(router_res.choices[0].message.content)
+    except Exception as router_err:
+        logger.warning(f"Router model {GROQ_ROUTE_MODEL} failed: {router_err}. Trying fallback {GROQ_FALLBACK_ROUTE_MODEL}...")
+        try:
+            router_res = groq_client.chat.completions.create(
+                model=GROQ_FALLBACK_ROUTE_MODEL,
+                messages=router_messages,
+                temperature=0.0,
+                max_tokens=600,
+            )
+            raw_content = router_res.choices[0].message.content
+            cleaned_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
+            # If JSON parseable, load it; otherwise extract tag directly
+            try:
+                routing = json.loads(cleaned_content)
+            except Exception:
+                for tag in ["OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING", "COMMERCIAL_HANDOFF"]:
+                    if tag in cleaned_content:
+                        routing = {"classification": tag, "reason": "Fallback extracted"}
+                        break
+                else:
+                    routing = {"classification": "PATH_A"}
+        except Exception as fb_err:
+            logger.error(f"Fallback router {GROQ_FALLBACK_ROUTE_MODEL} also failed: {fb_err}. Defaulting to PATH_A.")
+            routing = {"classification": "PATH_A"}
 
     if isinstance(routing, list) and len(routing) > 0:
         routing = routing[0]

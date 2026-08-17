@@ -5,7 +5,9 @@ load_dotenv()
 
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
 GROQ_ROUTE_MODEL = os.environ.get("GROQ_ROUTE_MODEL", "openai/gpt-oss-20b")
-GROQ_SYNTHESIS_MODEL = os.environ.get("GROQ_SYNTHESIS_MODEL", "llama-3.3-70b-versatile")
+GROQ_FALLBACK_ROUTE_MODEL = os.environ.get("GROQ_FALLBACK_ROUTE_MODEL", "qwen/qwen3.6-27b")
+GROQ_SYNTHESIS_MODEL = os.environ.get("GROQ_SYNTHESIS_MODEL", "openai/gpt-oss-120b")
+GROQ_FALLBACK_SYNTHESIS_MODEL = os.environ.get("GROQ_FALLBACK_SYNTHESIS_MODEL", "openai/gpt-oss-20b")
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY", "")
 
