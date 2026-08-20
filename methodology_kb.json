@@ -1,156 +1,94 @@
 [
   {
-    "section_title": "7-Day Trailing Average — Calculation",
-    "chunk_content": "The 7-day trailing average is a property's pricing baseline. It is calculated as the mean of that property's daily-average nightly rate across the 6 calendar days immediately before the current day — one aggregated value per day, not one value per scrape (properties are scraped 4 times a day, so 'day' and 'scrape' are not the same unit). The current day is always excluded from its own baseline, so incomplete intraday scraping never skews the number."
+    "section_title": "Overview & Purpose of the Real Estate Dashboard",
+    "chunk_content": "The Joule Dynamics Real Estate Intelligence Dashboard is a live market intelligence interface designed for short-term rental property managers, investors, and hosts. It provides real-time pricing intelligence, rate change monitoring, historical trailing average benchmarks, and volatility tracking across competitive rental properties in major markets like Miami and the NYC/NJ Metro area."
   },
   {
-    "section_title": "Pricing Anomalies / Spike Alerts — Threshold",
-    "chunk_content": "A pricing anomaly (spike alert) triggers when a property's current nightly rate deviates by 25% or more, in either direction, from its own 7-day trailing average — a surge and a drop both count. This is an absolute percentage deviation, not a directional-only threshold."
+    "section_title": "Top KPI Metric Cards",
+    "chunk_content": "The top of the dashboard displays four high-level KPI cards summarizing key real estate metrics across the currently filtered properties:\n1. Properties Tracked: Total number of active rental listings matching the current filter selection.\n2. Rate Changes (7d): Number and percentage of tracked properties that had a nightly rate change in the last 7 scrape days compared to their prior reading.\n3. 25%+ Spikes (7d): Number of tracked properties that experienced an extreme price swing (25% or greater surge or drop) relative to their 7-day trailing average.\n4. Scrape Engine Status: Live operational health indicator of the automated data collection pipeline (e.g. Live or Degraded)."
   },
   {
-    "section_title": "Scrape Cadence & Data Refresh",
-    "chunk_content": "Listings are scraped 4 times per day to capture short-term rate and availability changes throughout the day."
+    "section_title": "Global Filters & Control Bar",
+    "chunk_content": "The Global Control Bar sits above the dashboard components and allows users to slice and filter all dashboard data simultaneously:\n- Properties: A searchable multi-select checkbox dropdown to isolate one or more specific listings.\n- Market: Filter by geographic market ('Miami' or 'NYC/NJ Metro').\n- Platform: Filter by booking platform ('Airbnb' for live daily tracking, 'Vrbo' for historical data).\n- Bedrooms: Filter by property size (e.g. 1 bedroom, 2 bedrooms, etc.).\n- Status (Currently Tracked vs Untracked): 'Currently Tracked' shows actively monitored listings (is_active = true); 'Untracked' shows archived/unmonitored listings; 'All Historical' displays everything.\n- Stay Dates (Date Range Picker): Filters the data based on the stay check-in date being priced, which automatically triggers dynamic Temporal UX States across the dashboard."
   },
   {
-    "section_title": "Stale Data Status",
-    "chunk_content": "A property is flagged 'Stale' if the system has not successfully fetched fresh pricing for over 24 hours. The UI fades the row to 60% opacity and shows 'YES (STALE)' under availability. A prolonged Stale status usually reflects a scraping failure (network error, site change, or an access block), not that the listing became available again."
+    "section_title": "Temporal UX States: Present, Historical, and Future Modes",
+    "chunk_content": "The dashboard dynamically adapts its labels, descriptions, and visual terminology based on the selected Stay Dates filter into three distinct Temporal States:\n1. Present Mode (Default): When no stay date filter is applied, or when the date range includes today. Focuses on live, actionable data. Displays relative timestamps (e.g., '3h ago') and flags data older than 24h as 'STALE'.\n2. Historical Mode: When the selected stay date range is entirely in the past. Focuses on retrospective post-mortem analysis. Replaces relative times with exact recording dates (e.g., 'Recorded Aug 3'), removes 'STALE' warnings, and uses historical terminology like 'Was Available' and 'Was Booked'.\n3. Future Mode: When the selected stay date range is entirely in the future. Focuses on forward projections and booking lead times. Uses terminology like 'Projected Rate Anomalies', 'Pre-open', and 'Pre-booked'."
   },
   {
-    "section_title": "Unavailable / 2-Night Window Definition",
-    "chunk_content": "The system checks each listing for a consecutive 2-night opening starting from the current date only — it does not scan the full upcoming calendar. A property is marked 'Unavailable' if that specific 2-night window is not open, even if other dates further out are bookable. This 2-night rule was chosen because most premium short-term rentals require a minimum stay, making single-night gaps effectively unbookable. This is an immediate demand-tightness signal, not a full occupancy calculation — the system cannot currently determine whether a date further in the future is booked."
+    "section_title": "Rate Volatility Alert Cards",
+    "chunk_content": "The Rate Volatility Alerts section highlights properties exhibiting extreme pricing deviations (25% or more compared to their 7-day trailing average benchmark). The system selects up to four cards, balancing the top two steepest price surges (highlighted in green with positive percentage badges like '+32.5% vs avg') and the top two steepest price drops (highlighted in amber/yellow with negative percentage badges like '-28.0% vs avg'). Each card displays the property name, market, platform, stay date, current nightly rate, and percentage deviation."
   },
   {
-    "section_title": "Booked vs. Host-Blocked (Known Limitation)",
-    "chunk_content": "The system cannot distinguish a date that's unavailable because it's booked by a guest from one that's unavailable because the host manually blocked it. Both appear identically as 'Unavailable.' This is a structural limitation — there is no reservation-level data source — not something that will resolve with more time or data."
+    "section_title": "Nightly Rate History Line Chart",
+    "chunk_content": "The Nightly Rate History chart provides a time-series visual of pricing movements over time for a single property:\n- Solid Line: The actual nightly rate recorded at each scrape timestamp.\n- Dotted Line: The property's 7-day rolling trailing average baseline, allowing users to visually spot sudden surges, promotional markdowns, or weekend premium spikes.\n- Property Selection: By default, the chart uses an automated algorithm that selects the most informative listing (prioritizing high volatility, recent data, and dense history) from the current filter list. Users can manually choose any property via the dropdown menu above the chart; manual selections persist until the chosen property is filtered out."
   },
   {
-    "section_title": "Market Average Calculation",
-    "chunk_content": "A market's average nightly rate only includes properties that are currently active (not removed from tracking) and have a known, non-null rate. Unavailable properties (null rate) are excluded rather than counted as zero, so they never artificially drag the average down. Stale properties are also automatically excluded from live averages and reports, so only current, actionable data is reflected."
-  },
-  {
-    "section_title": "Discounted Rate Capture",
-    "chunk_content": "When a listing shows a discounted price (e.g. a crossed-out original price next to a lower promotional price), the system captures the final discounted amount as the actual nightly rate — the number a customer would actually pay."
-  },
-  {
-    "section_title": "Host Identification & Multi-Property Tracking",
-    "chunk_content": "The system extracts each listing's host name or profile identifier to help identify multi-property operators. If a host name isn't available in the standard page structure, it falls back to locating the host's profile link instead."
-  },
-  {
-    "section_title": "Property Key Grouping (De-duplication)",
-    "chunk_content": "A unique property key groups listings that represent the same physical rental unit even when it's listed across multiple platforms, so the same property is never double-counted in totals or averages."
-  },
-  {
-    "section_title": "Consecutive Failure Handling",
-    "chunk_content": "Repeated 'not found' errors on a listing increment a failure counter, which helps distinguish a temporary network glitch from a listing that's been permanently removed by its host."
-  },
-  {
-    "section_title": "Extraction Fallback Method",
-    "chunk_content": "If the standard price-extraction method fails to find a recognizable pricing format (e.g., a platform changed its page layout), the system escalates to a secondary extraction method to maximize successful data capture."
-  },
-  {
-    "section_title": "Data Isolation by Platform",
-    "chunk_content": "Pricing data is kept strictly separated by platform. Airbnb and Vrbo have different fee structures, algorithms, and booking rules, so their data is never blended together in a single average or comparison."
-  },
-  {
-    "section_title": "Property Inactivity & Removal",
-    "chunk_content": "If a property is removed from the active tracking list, it's automatically marked inactive. Its historical data remains stored and viewable (via the 'Historical' filter), but it's excluded from live averages, KPIs, and current-state reporting."
-  },
-  {
-    "section_title": "Primary Tracking Markets",
-    "chunk_content": "The system actively tracks NYC/NJ Metro and Miami — chosen for their high volume of short-term rentals and volatile pricing, and specifically to capture rate dynamics building up to the 2026 World Cup Final. Expanding to a new market is a configuration change (adding listings to track), not a rebuild of the system."
-  },
-  {
-    "section_title": "Vrbo Historical Tracking Status",
-    "chunk_content": "Vrbo listings are marked 'Historical.' Fresh daily rates are no longer fetched from Vrbo due to a persistent access block encountered during scraping; Airbnb is the actively monitored platform going forward. Vrbo's past data remains fully visible and usable as a baseline comparison against current Airbnb trends — it was not deleted."
-  },
-  {
-    "section_title": "Global Filters",
-    "chunk_content": "The Real Estate Rate Monitor page has global filters that apply across the map, KPIs, charts, and table simultaneously: Market (region), Platform (Airbnb/Vrbo), Status (Currently Tracked / Historical / All), Bedrooms, and a Stay Date range. All filters recalculate the full page in real time."
-  },
-  {
-    "section_title": "Dashboard KPIs",
-    "chunk_content": "Properties Tracked: count of unique properties matching the active filters. Rate Changes (7D): total nightly rate changes detected across tracked properties in the last 7 days. 25%+ Spikes (7D): count of pricing anomalies (25%+ deviation from a property's own 7-day average, either direction) in the last 7 days."
-  },
-  {
-    "section_title": "Nightly Rate History Chart",
-    "chunk_content": "The chart for a selected property plots two lines: the solid line is the actual nightly rate recorded at each scrape; the dashed line is the 7-day trailing average benchmark, letting a viewer see at a glance when the current rate is surging above or dropping below its historical norm."
+    "section_title": "Market Averages Summary Chips",
+    "chunk_content": "The Market Averages bar displays regional summary chips summarizing the mean price per market (e.g., '[ Miami avg $450/night (12) ]'). The parenthesized number indicates how many distinct properties contributed to the calculation. The average is computed by taking the latest available nightly price for each property matching the active filters."
   },
   {
     "section_title": "Property Rate Snapshot Table",
-    "chunk_content": "Columns: Property (name, links to the live listing), Market/Platform, Beds/Rating (bedroom count, star rating, review count), Stay Date, Rate (or a sparkline of the last 5 known prices if currently unavailable), vs 7d Avg (colored: green positive, red negative, bold amber if 25%+), Avail. (YES/NO/YES (STALE)), and Last Checked (time since last successful scrape)."
+    "chunk_content": "The Property Rate Snapshot table is the core tabular view listing all properties matching the active filter criteria. Columns include:\n- Property: Listing title with an external link icon opening the live booking page.\n- Market & Platform: Region ('Miami', 'NYC/NJ Metro') and platform ('Airbnb', 'Vrbo').\n- Beds / Rating: Bedroom count with bed icon, star rating out of 5, and total review count.\n- Stay Date: The check-in date being evaluated.\n- Rate: The nightly price in USD. If a listing is unavailable, the cell displays 'Unavailable' with a tooltip and an inline mini sparkline chart showing the last 5 known rates and last recorded date.\n- vs 7d Avg: The percentage deviation from the listing's 7-day trailing average (green for above average, red for below average)."
   },
   {
-    "section_title": "System Limits — Search & History",
-    "chunk_content": "Property searches return a maximum of 200 results at a time. Historical rate lookups support up to 90 days back, and rate-change comparisons can reference up to 14 days prior."
+    "section_title": "Table Availability Badges & Stale Row Dimming",
+    "chunk_content": "The Availability column and row appearance in the Property Rate Snapshot table dynamically reflect temporal and data freshness states:\n- In Present Mode: Available properties display a green 'YES' badge; available properties with data older than 24h display a faded 'YES (STALE)' badge; unavailable listings display a grey 'NO' badge. Entire rows older than 24h dim to 60% opacity to visually warn users of stale readings.\n- In Historical Mode: Available listings display a teal 'Was Available' badge; unavailable/sold-out listings display a red 'Was Booked' badge. Stale row dimming is disabled because all past data is historical.\n- In Future Mode: Listings open for future booking display a blue 'Pre-open' badge; unlisted/booked future dates display a red 'Pre-booked' badge."
   },
   {
-    "section_title": "Lookahead Limitation (Known, Not Temporary)",
-    "chunk_content": "The system only ever checks pricing for a 2-night stay starting on the current day — it has never captured and cannot currently capture a future-dated price (e.g., 'what will this cost next month'). This requires a separate lookahead-scraping capability that doesn't exist yet; it is not something that resolves simply by running longer."
-
+    "section_title": "Interactive Property Map & Clusters",
+    "chunk_content": "An interactive Leaflet map plots the geographical location of all filtered properties using GPS coordinates:\n- Color-Coded Pins: Green pins indicate available properties; red pins indicate unavailable/booked listings; grey pins indicate listings with no current price recorded.\n- Map Clustering: Closely grouped listings automatically collapse into numbered circular cluster badges (e.g. green circle with '12'). Clicking or zooming in expands the cluster into individual pins.\n- Popups & Auto-Fit: Clicking a pin displays a popup card with the property name, market, current rate, and a direct link to the listing. The map automatically pans and zooms to fit all filtered properties whenever filters change."
   },
   {
-    "section_title": "About Joule Dynamics",
-    "chunk_content": "Joule Dynamics is an AI automation agency that builds and personally maintains live systems like this one — RAG pipelines, AI Agents, Large Langchain & LlamaIndex automations, web scraping and monitoring, lead generation, and AI automation for businesses. This Real Estate Rate Monitor is one of several live systems Joule Dynamics runs."
+    "section_title": "7-Day Trailing Average Benchmark Definition",
+    "chunk_content": "The 7-day trailing average is the baseline benchmark used to measure rate volatility and price spikes. It is calculated by taking the arithmetic mean of a property's nightly rates across the six full calendar days immediately preceding the current day. The current day's price is strictly excluded from the baseline to prevent recent rate shifts from dampening spike detection."
   },
   {
-    "section_title": "What's Available Now",
-    "chunk_content": "Competitor Rate Watch is the live, working service available today: a client provides 5-10 of their own named competitor listings, and the system tracks those specific properties and alerts on price or availability changes — so a property manager knows the moment a competitor moves, instead of finding out after losing a booking."
+    "section_title": "25%+ Volatility Spike Alerts Definition",
+    "chunk_content": "A pricing spike is defined as any nightly rate that deviates by 25% or more (either an increase >= +25% or a decrease <= -25%) from a property's 7-day trailing average baseline. Positive spikes often indicate dynamic surge pricing for high-demand events (holidays, conferences, concerts), while negative spikes indicate promotional discounting, off-season markdowns, or last-minute liquidation."
   },
   {
-    "section_title": "Custom Builds Available On Request",
-    "chunk_content": "Beyond Competitor Rate Watch, Joule Dynamics builds custom data/AI products on request, tailored to a client's market and use case: Owner Acquisition Reports (revenue-potential analysis to help win new property-management contracts), Investor Yield Data (occupancy/rate trend analysis for investor-facing deals), Cross-market Arbitrage Targeting (identifying long-term rentals with strong short-term-rental upside), Comparable Market Analysis (CMA) Automation, Off-Market Deal Sourcing (flagging distressed/underpriced listings), and Portfolio Performance Dashboards (a consolidated multi-property view). These are described as available on request because they are not yet live, working features — if asked to demonstrate one, say so plainly rather than implying it already runs."
+    "section_title": "2-Night Check-in Window Standard",
+    "chunk_content": "To maintain consistent, comparable pricing data across all platforms and listings, the system prices short-term rental properties using a standardized 2-night minimum stay window starting on each evaluated check-in date. This standardizes rate comparisons and avoids arbitrary single-night checkout restrictions imposed by certain hosts."
   },
   {
-    "section_title": "Getting In Touch",
-    "chunk_content": "A visitor interested in Competitor Rate Watch or a custom build can reach out via the WhatsApp or Email contact options on the page."
+    "section_title": "Booked vs. Host-Blocked Calendar Dates",
+    "chunk_content": "When a short-term rental platform reports a listing as 'Unavailable' for specific dates, it indicates that the dates cannot be booked by the public. This can occur either because a guest has booked the reservation, or because the host manually blocked the calendar for maintenance, personal use, or minimum stay restrictions. While OTAs do not publish private host calendar states, unavailability reliably indicates the listing is off the open market."
   },
   {
-    "section_title": "What This Demo Represents",
-    "chunk_content": "This is a real, live, working system built and operated by Joule Dynamics' founder personally — not a mature enterprise SaaS product with a large team behind it. Its scope (two markets, Airbnb-primary, a 2-night availability window) reflects genuine current capability, not a limitation being hidden. Custom builds are scoped to what's realistic to deliver, not oversold."
-  },
-  
-  {
-    "section_title": "The Live Demo Explained vs. Real Client Systems",
-    "chunk_content": "The dashboard and Pulse AI assistant you see on this page are a live demonstration. We track a small, hand-picked sample of short-term rentals in Miami and the New York/New Jersey Metro area to show exactly how our technology works in real-time. Because it is a small sample, it should not be used as complete market advice for those cities. When a property manager or investor hires us, we build them a completely private, secure system. Their custom build tracks only their specific properties and their direct local competitors, keeping their business data entirely isolated and confidential."
+    "section_title": "Scrape Cadence & Data Refresh Frequency",
+    "chunk_content": "Active rental listings are tracked and refreshed four times daily (4x daily) through automated schedules. This frequency captures mid-day dynamic pricing adjustments, last-minute rate drops, and sudden availability changes while maintaining continuous data freshness across tracked markets."
   },
   {
-    "section_title": "Meet Pulse: The AI Real Estate Assistant; Pulse Capabilities",
-    "chunk_content": "Pulse is the conversational intelligence layer you can interact with on this page. Instead of using generic AI guesses, Pulse reads the actual live data on our dashboard to answer your questions. You can ask Pulse to find sudden rate spikes or crashes, calculate the average nightly rates in Miami, check the 7-day pricing trends, or rank properties by how often they change their prices. It can also map distances between properties, search for specific bedroom counts, and give you a snapshot of what percentage of listings are currently booked. Details the specific capabilities of the Pulse AI assistant based on the live Rate Monitor. Covers its ability to filter by bedrooms, calculate geography, compare rates, and spot pricing anomalies in plain English."
+    "section_title": "Curated Showcase Sandbox Scope",
+    "chunk_content": "The data presented on the live dashboard represents a curated, proof-of-concept sample of properties across Miami and the NYC/NJ Metro area. It is designed to demonstrate real-time pricing intelligence, volatility alerts, and architectural data pipelines. It is not an exhaustive city-wide census. Joule Dynamics builds full-scale, bespoke data pipelines tracking thousands of listings for enterprise clients."
   },
   {
-    "section_title": "Managing Inquiries: The Unified Triage Engine",
-    "chunk_content": "Property managers are constantly flooded with questions across emails, WhatsApp, and social media (Scoped to Facebook and Instagram Only) at all hours. A Triage Engine connects all these different channels into one smooth, organized inbox. When a prospect reaches out, the AI instantly reads the message, checks your property data, and immediately answers routine questions—like parking rules, availability, or office hours. This cuts response times down from hours to under 30 seconds, keeping potential renters engaged while your team focuses on higher-value work."
+    "section_title": "Troubleshooting: Why is Property X Missing from the Chart, Table, or Map?",
+    "chunk_content": "If a user cannot find a specific property on the dashboard:\n1. Check Global Filters: Verify if filters for Market (e.g. Miami vs NYC), Bedrooms, Platform, or Status (Tracked vs Untracked) are excluding the listing.\n2. Stay Dates Filter: If a date range is selected, listings with no data recorded for that window may be hidden.\n3. Map Zoom & Bounds: On the map, check if the property lies outside the current zoom area or is grouped inside a numbered cluster circle.\n4. Chart Auto-Selection: On the line chart, the auto-selection algorithm selects a single optimal property by default. Use the property dropdown above the chart to explicitly select the desired listing."
   },
   {
-    "section_title": "Smart Human Handoffs and Lead Routing for Unified Triage Engine",
-    "chunk_content": "The AI is smart enough to know its limits. If a potential renter asks to negotiate a price, wants a personalized recommendation, or is ready to close a deal, the AI stops instantly and alerts your human sales team. It sends your staff a quick summary of the entire conversation so they do not have to read through long chat histories. At the same time, the AI gives the customer your direct contact card so they can easily call you, ensuring the customer never feels stuck talking to a bot."
+    "section_title": "Troubleshooting: Why Does the Table Say 'Was Available' or 'Pre-open'?",
+    "chunk_content": "If the table displays 'Was Available' / 'Was Booked' or 'Pre-open' / 'Pre-booked' instead of 'YES' or 'NO', the dashboard is in a Temporal State triggered by the Stay Dates filter:\n- 'Was Available' / 'Was Booked': The Stay Dates filter is set to past dates (Historical Mode).\n- 'Pre-open' / 'Pre-booked': The Stay Dates filter is set to future dates (Future Mode).\n- 'YES' / 'NO': The dashboard is in Present Mode (today's live data)."
   },
   {
-    "section_title": "Built-in Safety and Fair Housing Compliance",
-    "chunk_content": "Real estate professionals face strict legal liabilities, which is why a custom built AI from us has built-in safety nets. To comply fully with Fair Housing laws, the AI is strictly blocked from answering any questions about neighborhood demographics, steering tenants to specific areas, or making subjective judgments about who qualifies for a lease. It is only permitted to auto-reply to objective, factual questions. Anything requiring judgment or subjective advice is safely passed to a human team member to review."
+    "section_title": "Troubleshooting: Where Does Dashboard Data Come From?",
+    "chunk_content": "All pricing, availability, and metadata on the dashboard are extracted directly from live public OTA listing pages (Airbnb and Vrbo) using automated data collection pipelines. Nightly rates are calculated from exact checkout subtotals, and trailing benchmarks are computed continuously in the database."
   },
   {
-    "section_title": "Why Real Estate Businesses Need This in 2026",
-    "chunk_content": "Why invest in Joule Dynamics' tools? The 2026 real estate and short-term rental markets are highly competitive. Supply growth has leveled out, and travelers are waiting longer to book, creating shorter booking windows. Relying on static pricing or manual research means losing money. By using our dynamic Competitor Rate Watch, operators can spot market trends instantly and adjust prices before competitors do. Furthermore, automating late-night tenant inquiries and maintenance requests ensures a premium customer experience without needing to hire a 24/7 call center staff."
+    "section_title": "Data Exports: Downloading CSV and Markdown Reports",
+    "chunk_content": "Users can request full or filtered data exports directly through Pulse AI. The assistant generates structured CSV spreadsheets or Markdown summaries containing listing names, markets, stay dates, nightly rates, 7-day trailing averages, percentage deviations, and availability statuses, provided as a direct download link."
   },
   {
-    "section_title": "Custom Data Dashboards We Build For Clients",
-    "chunk_content": "Beyond the live demo, we build customized data tools for property managers, agents, and investors. We build 'Competitor Rate Watch' to instantly notify you when rival properties drop their prices. We design 'Owner Acquisition Reports' to help property managers prove their value and win new contracts. We also build 'Automated Comp Sheets' that gather comparable pricing data in minutes instead of hours, and systems that flag off-market, distressed properties that have been sitting unsold or dropping their prices repeatedly."
+    "section_title": "About Joule Dynamics & Pulse AI",
+    "chunk_content": "Joule Dynamics is a specialized data engineering and AI automation agency that designs custom web scrapers, automated market intelligence dashboards, and intelligent AI assistants for real estate companies, property management firms, and investment funds. Pulse AI is the real estate intelligence assistant developed for Joule Dynamics."
   },
   {
-    "section_title": "Daily Operations: Guest and Tenant Assistants",
-    "chunk_content": "Operational use cases for the Pulse intelligence pattern. Our technology goes beyond pricing—it streamlines daily property management. For short-term rentals, we build 'Guest Concierges' that answer 24/7 questions about WiFi passwords, trash days, and smart locks based entirely on your exact house manual. For multifamily apartment buildings, we build 'Leasing Assistants' that automatically answer prospect questions about pet policies, deposit structures, and floor plans, instantly qualifying renters before they ever take up your team's time for a tour."
+    "section_title": "Custom Scraper Builds & Portfolio Tracking for Enterprise Clients",
+    "chunk_content": "Joule Dynamics builds custom data pipelines tailored to client requirements, including: tracking custom property portfolios across hundreds of markets, multi-platform tracking across Airbnb, Vrbo, Booking.com, and direct booking engines, competitor rate-parity monitoring, automated pricing repricers, and custom analytics dashboards."
   },
   {
-    "section_title": "How Rate Monitoring Increases Bookings and Revenue",
-    "chunk_content": "Most property managers change their prices by hand, but they usually do it too late—after they have already lost guests to a competitor who lowered their price first. Our live rate monitor constantly watches prices across platforms like Airbnb. It compares current prices to the past week to find unusual changes instantly. By catching these changes immediately, property managers can adjust their own prices right away. This proactive approach typically helps properties get 12 to 18 percent more bookings because they are always priced competitively."
-  },
-  {
-    "section_title": "Data Tools for Real Estate Agents and Investors",
-    "chunk_content": "When real estate agents try to pitch a property to an investor, the investor wants proof that the property will make money. Instead of relying on guesswork, our custom systems create clear, easy-to-read reports showing exactly how much similar properties are earning and how often they are booked. We also help agents find hidden opportunities—like normal, long-term rental homes that could make a lot more money if they were converted into short-term vacation rentals. This gives agents the exact numbers they need to confidently show investors a great deal."
-  },
-  {
-    "section_title": "Managing Multiple Properties Easily",
-    "chunk_content": "If you manage many properties, it can be exhausting to check every single listing one by one to see how they are doing. We solve this by building a single, simple dashboard that puts all your properties in one place. You can see your entire portfolio at a glance, instantly spotting which homes are doing well and which ones need your attention today, saving you hours of clicking around."
+    "section_title": "Commercial Strategy & Contacting Joule Dynamics",
+    "chunk_content": "Clients interested in commissioning custom scrapers, enterprise real estate dashboards, or booking a strategy consultation can contact the Joule Dynamics engineering team directly via email (john@jouledynamics.me) or WhatsApp (+2349014216537). Pulse AI can generate direct contact buttons upon request."
   }
 ]

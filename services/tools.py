@@ -9,8 +9,42 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_dashboard_kpis",
-            "description": "Fetch overall Real Estate Rate Monitor KPIs: tracked property count, 7-day rate changes, spike count, and scrape health status per platform. Use for general 'how is the system doing?' or market health questions.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
+            "description": "Fetch overall Real Estate Rate Monitor top KPI metrics (properties tracked, 7-day rate changes, 25%+ price spikes, and scrape health status), optionally filtered by market, platform, bedrooms, active status, specific property IDs, or stay date window. Matches the live dashboard top KPI cards.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "p_market": {
+                        "type": "string",
+                        "description": "Optional market region filter ('Miami' or 'NYC/NJ Metro')",
+                    },
+                    "p_platform": {
+                        "type": "string",
+                        "description": "Optional booking platform filter ('airbnb' or 'vrbo')",
+                    },
+                    "p_bedrooms": {
+                        "type": "integer",
+                        "description": "Optional bedroom count filter (e.g. 1, 2, 3)",
+                    },
+                    "p_is_active": {
+                        "type": "boolean",
+                        "description": "Optional tracking status filter: true for currently tracked, false for untracked/archived",
+                    },
+                    "p_property_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of specific property UUIDs to filter KPIs",
+                    },
+                    "p_start_date": {
+                        "type": "string",
+                        "description": "Optional stay date window start (YYYY-MM-DD)",
+                    },
+                    "p_end_date": {
+                        "type": "string",
+                        "description": "Optional stay date window end (YYYY-MM-DD)",
+                    },
+                },
+                "required": [],
+            },
         },
     },
     {

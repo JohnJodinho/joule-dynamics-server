@@ -12,6 +12,8 @@ from services.supabase_service import execute_tool_rpc, search_methodology_rag
 from services.embedding_service import get_embedding_model
 from services.observability import setup_logger
 from config import (
+    GROQ_FALLBACK_ROUTE_MODEL,
+    GROQ_FALLBACK_SYNTHESIS_MODEL,
     GROQ_API_KEY,
     MAPBOX_ACCESS_TOKEN,
     CONTACT_EMAIL,
@@ -52,8 +54,8 @@ Analyze the user query and classify it into EXACTLY ONE of six classifications:
 
 1. "OUT_OF_SCOPE": Query asks about topics completely unrelated to real estate, data monitoring, or the current conversation (e.g. sports, general coding, cooking, recipes). IMPORTANT: Questions asking who you are ("who are you?"), what model you are, or asking to summarize/recap what was discussed in the current chat ("what have we discussed so far?", "summarize our chat") are ALWAYS IN-SCOPE and must NEVER be classified as OUT_OF_SCOPE.
 2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates).
-3. "PATH_B": Query asks a methodology/system design question (7-day average definition, 2-night check-in window, 4x daily scrape cadence), OR asks a meta-conversational question (e.g. "What have we discussed so far?", "Can you summarize our conversation?", "Recap what we talked about").
-4. "BOTH": Query requires BOTH explaining a methodology concept AND fetching live data metrics.
+3. "PATH_B": Query asks a dashboard visual/UI question (e.g. "What do the top 4 metric cards mean?", "Why does the table say 'Was Available'?", "What do the green/red map pins mean?", "Why is the chart line dotted?", "What does the sparkline mean?", "Why is a row dimmed?"), OR asks a real estate methodology/business logic question (7-day average definition, 2-night check-in window, 4x daily scrape cadence, booked vs host-blocked, temporal UX states), OR asks a meta-conversational question (e.g. "What have we discussed so far?", "Can you summarize our conversation?", "Recap what we talked about").
+4. "BOTH": Query requires BOTH explaining a dashboard UI/methodology concept AND fetching live data metrics via tools.
 5. "GREETING": User is saying hello, thanking the assistant, asking "who are you?", or making casual conversation.
 6. "COMMERCIAL_HANDOFF": Query asks about getting started, hiring Joule Dynamics, custom builds, custom dashboards, pricing for software, or requests tracking for their own specific portfolio outside the demo scope.
 
@@ -87,6 +89,15 @@ Every advisory response MUST close with this disclaimer on its own line:
 ⚠️ This is a data-informed observation, not professional pricing or financial advice.
 
 EXPORTS & DOWNLOADS: When a user requests an export or download, invoke `generate_data_export`. In your final response, provide the download URL as a clean markdown link (e.g. `[Download CSV Report](<download_url>)`). Do NOT dump the full raw CSV/Markdown text into the chat message.
+
+DASHBOARD UI & VISUAL GUIDANCE: When a user asks questions about what they see on the Real Estate Intelligence Dashboard:
+- Explain visual elements in simple, non-technical language tailored to property managers and investors.
+- Top KPI Cards: Explain that the top cards dynamically calculate metrics over the currently filtered properties (Properties Tracked, 7-day Rate Changes, 25%+ Spikes, and Scrape Health).
+- Nightly Rate History Chart: Clarify that the solid line is the actual recorded nightly rate and the dotted line is the 7-day rolling trailing average baseline.
+- Temporal UX States & Badges: Explain that changing the Stay Dates filter triggers Present Mode ('YES'/'NO', relative times, 'STALE' warning), Historical Mode (past stay dates: 'Was Available'/'Was Booked', recorded dates), or Future Mode ('Pre-open'/'Pre-booked', projected anomalies).
+- Property Rate Table: Clarify percentage deviations vs 7d avg, inline mini sparklines on unavailable properties showing the last 5 known prices, and 60% row opacity dimming for stale data older than 24 hours.
+- Interactive Map: Explain color-coded pins (green=available, red=booked/unavailable, grey=no rate), circular numbered cluster badges, and popup cards.
+- Troubleshooting Missing Listings: Guide the user to check active Global Filters (Market, Bedrooms, Status, Stay Date range) or map zoom bounds.
 
 CONVERSATION RECAPS & SUMMARIES: When a user asks to summarize what was discussed, recap findings, or review earlier turns (e.g. "What have we discussed so far?"), review the conversation history in context and provide a structured, bullet-point summary of all properties, metrics, markets, and questions discussed in the session.
 
@@ -493,14 +504,30 @@ async def process_chat_message(
                 }
             )
 
-        # Second Brain Call to Synthesize Final Output
-        final_res = groq_client.chat.completions.create(
-            model=GROQ_SYNTHESIS_MODEL,
-            messages=messages,
-            temperature=0.2,
-            max_tokens=600,
-        )
-        final_reply = final_res.choices[0].message.content
+        # Second Brain Call to Synthesize Final Output (with primary + fallback)
+        final_reply = None
+        for model_candidate in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
+            try:
+                final_res = groq_client.chat.completions.create(
+                    model=model_candidate,
+                    messages=messages,
+                    temperature=0.2,
+                    max_tokens=800,
+                )
+                final_reply = final_res.choices[0].message.content
+                break
+            except Exception as synth_err:
+                logger.warning(f"Synthesis on {model_candidate} encountered: {synth_err}. Checking fallback...")
+                # If error is due to failed_generation, try parsing or fallback
+                err_body = getattr(synth_err, "body", {})
+                if isinstance(err_body, dict):
+                    failed_gen = err_body.get("error", {}).get("failed_generation", "")
+                    if failed_gen:
+                        logger.info(f"Using raw synthesis generation: {failed_gen[:100]}")
+                        final_reply = failed_gen
+                        break
+        if not final_reply:
+            final_reply = "I retrieved the real estate intelligence data. Please let me know if you would like me to narrow down by a specific market or date range." 
     else:
         final_reply = response_message.content
 

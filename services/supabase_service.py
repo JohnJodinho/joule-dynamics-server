@@ -159,8 +159,24 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
         pass
 
     elif func_name == "get_dashboard_kpis":
-        # RPC: get_dashboard_kpis() — no params
-        args = {}
+        # RPC: get_dashboard_kpis(p_market, p_platform, p_bedrooms, p_is_active, p_property_ids, p_start_date, p_end_date)
+        p_market = args.get("p_market") or args.get("market")
+        p_platform = args.get("p_platform") or args.get("platform")
+        p_bedrooms = args.get("p_bedrooms") or args.get("bedrooms")
+        p_is_active = args.get("p_is_active") if "p_is_active" in args else args.get("is_active")
+        p_property_ids = args.get("p_property_ids") or args.get("property_ids")
+        p_start_date = args.get("p_start_date") or args.get("start_date")
+        p_end_date = args.get("p_end_date") or args.get("end_date")
+
+        args = {
+            "p_market": p_market,
+            "p_platform": p_platform,
+            "p_bedrooms": p_bedrooms,
+            "p_is_active": p_is_active,
+            "p_property_ids": p_property_ids,
+            "p_start_date": p_start_date,
+            "p_end_date": p_end_date,
+        }
 
     # ── Execute RPC ───────────────────────────────────────────────────────────
     try:
@@ -178,7 +194,7 @@ async def search_methodology_rag(query: str, top_k: int = 3) -> list:
             "match_re_methodology",
             {
                 "query_embedding": vector,
-                "match_threshold": 0.45,
+                "match_threshold": 0.20,
                 "match_count": top_k
             }
         ).execute()
