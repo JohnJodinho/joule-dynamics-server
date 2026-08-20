@@ -88,7 +88,11 @@ Every advisory response MUST close with this disclaimer on its own line:
 
 ⚠️ This is a data-informed observation, not professional pricing or financial advice.
 
-EXPORTS & DOWNLOADS: When a user requests an export or download, invoke `generate_data_export`. In your final response, provide the download URL as a clean markdown link (e.g. `[Download CSV Report](<download_url>)`). Do NOT dump the full raw CSV/Markdown text into the chat message.
+REPORTS & DOWNLOADABLE EXPORTS:
+- When a user asks for a report, analysis, or rate breakdown (e.g. "Prepare a report for me on the rate changes in the last 14 days", "Give me a market summary"):
+  1. Retrieve the necessary data using live real estate tools (e.g. `get_market_snapshot`, `get_property_rate_changes`, `get_dashboard_kpis`).
+  2. If the user explicitly asks to download, export, or save a report file, invoke `generate_data_export` with format "md" containing the complete Markdown report content.
+  3. Synthesize the findings directly into your response using clear Markdown tables, headers, and bullet points. If a download URL is returned from `generate_data_export`, include it at the top or bottom as a clean link: `[Download Markdown Report](<download_url>)`.
 
 DASHBOARD UI & VISUAL GUIDANCE: When a user asks questions about what they see on the Real Estate Intelligence Dashboard:
 - Explain visual elements in simple, non-technical language tailored to property managers and investors.
@@ -115,6 +119,40 @@ When a user asks about custom builds, deploying this system for their business, 
 # MAX rows the LLM receives from any single tool call. Beyond this, data is
 # sliced and the LLM is told to recommend narrowing filters.
 _MAX_ROWS = 50
+
+
+def parse_failed_generation(failed_gen: str):
+    """Extracts tool name and arguments from Groq 400 failed_generation string."""
+    if not failed_gen:
+        return None, None
+    try:
+        data = json.loads(failed_gen)
+        if isinstance(data, dict) and "name" in data:
+            args = data.get("arguments", {})
+            if isinstance(args, str):
+                try:
+                    args = json.loads(args)
+                except Exception:
+                    pass
+            return data["name"], args
+    except Exception:
+        pass
+    
+    match = re.search(r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}', failed_gen, re.DOTALL)
+    if match:
+        try:
+            return match.group(1), json.loads(match.group(2))
+        except Exception:
+            pass
+
+    match = re.search(r'<function=([a-zA-Z0-9_]+)[>\s]*(\{.*?\})', failed_gen, re.DOTALL)
+    if match:
+        try:
+            return match.group(1), json.loads(match.group(2))
+        except Exception:
+            pass
+
+    return None, None
 
 
 def compress_tool_output(func_name: str, db_result: dict) -> str:
@@ -442,94 +480,110 @@ async def process_chat_message(
     elif classification == "COMMERCIAL_HANDOFF":
         active_tools = COMMERCIAL_TOOLS
 
-    # STEP 3: Initial Brain Completion (llama-3.3-70b-versatile)
-    brain_res = groq_client.chat.completions.create(
-        model=GROQ_SYNTHESIS_MODEL,
-        messages=messages,
-        tools=active_tools,
-        tool_choice="auto" if active_tools else "none",
-        temperature=0.2,
-        max_tokens=600,
-    )
+    # STEP 3 & 4: Multi-Step Brain Completion & Tool Execution
+    final_reply = None
+    response_message = None
 
-    response_message = brain_res.choices[0].message
+    for model_candidate in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
+        try:
+            brain_res = groq_client.chat.completions.create(
+                model=model_candidate,
+                messages=messages,
+                tools=active_tools if active_tools else None,
+                tool_choice="auto" if active_tools else "none",
+                temperature=0.2,
+                max_tokens=1000,
+            )
+            response_message = brain_res.choices[0].message
+            break
+        except Exception as e:
+            logger.warning(f"Groq completion on {model_candidate} failed: {e}")
+            err_body = getattr(e, "body", {})
+            if isinstance(err_body, dict):
+                failed_gen = err_body.get("error", {}).get("failed_generation", "")
+                target_fn, fn_args = parse_failed_generation(failed_gen)
+                if target_fn and isinstance(fn_args, dict):
+                    from types import SimpleNamespace
+                    tool_call_obj = SimpleNamespace(
+                        id=f"recov_{int(time.time())}",
+                        function=SimpleNamespace(name=target_fn, arguments=json.dumps(fn_args))
+                    )
+                    response_message = SimpleNamespace(content=None, tool_calls=[tool_call_obj])
+                    logger.info(f"Recovered tool call: {target_fn}")
+                    break
 
-    # STEP 4: Process Tool Calls if Triggered
-    if response_message.tool_calls:
+    if getattr(response_message, "tool_calls", None):
         messages.append(response_message)
         for tool_call in response_message.tool_calls:
             func_name = tool_call.function.name
-            func_args = json.loads(tool_call.function.arguments)
+            try:
+                func_args = json.loads(tool_call.function.arguments) if isinstance(tool_call.function.arguments, str) else (tool_call.function.arguments or {})
+            except Exception:
+                func_args = {}
 
-            # ── Python-side tool handlers (not routed to Supabase) ──────────
+            # Execute tool
             if func_name == "generate_data_export":
                 from services.appwrite_service import upload_document_to_appwrite
-
-                db_result = await upload_document_to_appwrite(
-                    func_args.get("content", ""), func_args.get("format", "md")
-                )
+                content = func_args.get("content", "")
+                db_result = await upload_document_to_appwrite(content, "md")
 
             elif func_name == "geocode_address":
-                # Mapbox API call handled in Python — never hits Supabase
                 db_result = geocode_address_handler(func_args.get("address", ""))
 
             elif func_name == "generate_contact_buttons":
                 import urllib.parse
-
-                raw_message = func_args.get(
-                    "message", "Hi, I'd like to discuss a custom build."
-                )
+                raw_message = func_args.get("message", "Hi, I'd like to discuss a custom build.")
                 encoded_message = urllib.parse.quote(raw_message)
-
                 db_result = {
                     "status": "success",
-                    "email_button_markdown": f'[Get in touch via Email](<mailto:{CONTACT_EMAIL} "button">)',
-                    "whatsapp_button_markdown": f'[Chat on WhatsApp](<https://wa.me/{CONTACT_WHATSAPP}?text={encoded_message} "button">)',
+                    "email_button_markdown": f"[Get in touch via Email](mailto:{CONTACT_EMAIL})",
+                    "whatsapp_button_markdown": f"[Chat on WhatsApp](https://wa.me/{CONTACT_WHATSAPP}?text={encoded_message})",
                 }
-
             else:
                 db_result = await execute_tool_rpc(func_name, func_args)
 
             tool_results.append({"tool": func_name, "args": func_args})
-
-            # ── Payload compression before entering LLM context ─────────────
             compressed_content = compress_tool_output(func_name, db_result)
+            messages.append({
+                "tool_call_id": tool_call.id,
+                "role": "tool",
+                "name": func_name,
+                "content": compressed_content,
+            })
 
-            messages.append(
-                {
-                    "tool_call_id": tool_call.id,
-                    "role": "tool",
-                    "name": func_name,
-                    "content": compressed_content,
-                }
-            )
-
-        # Second Brain Call to Synthesize Final Output (with primary + fallback)
-        final_reply = None
+        # Second Brain Call for final response synthesis
         for model_candidate in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 final_res = groq_client.chat.completions.create(
                     model=model_candidate,
                     messages=messages,
                     temperature=0.2,
-                    max_tokens=800,
+                    max_tokens=1000,
                 )
                 final_reply = final_res.choices[0].message.content
                 break
             except Exception as synth_err:
-                logger.warning(f"Synthesis on {model_candidate} encountered: {synth_err}. Checking fallback...")
-                # If error is due to failed_generation, try parsing or fallback
+                logger.warning(f"Synthesis on {model_candidate} failed: {synth_err}")
                 err_body = getattr(synth_err, "body", {})
                 if isinstance(err_body, dict):
                     failed_gen = err_body.get("error", {}).get("failed_generation", "")
-                    if failed_gen:
-                        logger.info(f"Using raw synthesis generation: {failed_gen[:100]}")
-                        final_reply = failed_gen
+                    target_fn, fn_args = parse_failed_generation(failed_gen)
+                    if target_fn == "generate_data_export" and isinstance(fn_args, dict):
+                        from services.appwrite_service import upload_document_to_appwrite
+                        content = fn_args.get("content", "")
+                        upload_res = await upload_document_to_appwrite(content, "md")
+                        download_url = upload_res.get("download_url", "")
+                        if download_url:
+                            final_reply = f"{content}\n\n[Download Markdown Report]({download_url})"
+                        else:
+                            final_reply = content
                         break
-        if not final_reply:
-            final_reply = "I retrieved the real estate intelligence data. Please let me know if you would like me to narrow down by a specific market or date range." 
-    else:
+
+    elif response_message and response_message.content:
         final_reply = response_message.content
+
+    if not final_reply or final_reply.strip().startswith('{"name":') or final_reply.strip().startswith('<function='):
+        final_reply = "I retrieved the real estate intelligence data. Please let me know if you would like to view specific metrics or export this summary."
 
     # Track assistant reply in history — cap at 6 to prevent token creep
     session_history[session_id].append({"role": "assistant", "content": final_reply})

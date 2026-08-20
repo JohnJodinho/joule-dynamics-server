@@ -431,20 +431,21 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "generate_data_export",
-            "description": "Generate a downloadable report or data export (CSV or Markdown) based on data the user wants to save. Use when the user says 'export', 'download', 'give me a file', or 'save this as a report'. The content should be the full formatted data from prior tool results.",
+            "description": "Generate a downloadable Markdown (.md) report file for the user. Use when the user asks to download, export, or generate a downloadable report file. The content must be a comprehensive, well-structured Markdown document containing the real estate findings and tables.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "format": {
                         "type": "string",
-                        "description": "Export format: 'csv' or 'md'",
+                        "enum": ["md"],
+                        "description": "Export format, strictly 'md'",
                     },
                     "content": {
                         "type": "string",
-                        "description": "Full text content or CSV data to export",
+                        "description": "Complete formatted Markdown report content to save into the file",
                     },
                 },
-                "required": ["format", "content"],
+                "required": ["content"],
             },
         },
     },
