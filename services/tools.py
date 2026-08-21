@@ -470,3 +470,80 @@ COMMERCIAL_TOOLS = [
         },
     }
 ]
+
+
+# ─── STATIC TOOL GROUPINGS (Fix #4 — Tool-Set Pruning) ───────────────────────
+#
+# Instead of sending all 18 tool definitions on every call (~3,130 tokens),
+# the orchestrator picks the smallest group that covers the query.
+#
+# Grouping logic (chosen in agent_loop.py based on query keywords):
+#
+#   PATH_A queries break into 3 intent categories:
+#     MARKET_TOOLS     — "how does the market look", "averages", "trends"
+#     ANOMALY_TOOLS    — "spikes", "crashes", "anomalies", "volatile"
+#     PROPERTY_TOOLS   — "property", "listing", "compare", "availability"
+#     GEO_TOOLS        — "near", "address", "distance", "location"
+#
+# Each group includes generate_data_export so the model can always offer downloads.
+# Any group = ~4-6 tools = ~700-900 tokens (vs 3,130 for all 18).
+#
+# For BOTH / ambiguous queries, use FULL_REAL_ESTATE_TOOLS as fallback.
+
+_EXPORT_TOOL = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] == "generate_data_export"]
+_MARKET_NAMES      = {"get_market_averages", "get_market_snapshot", "get_market_trend",
+                      "get_tracked_markets", "get_dashboard_kpis"}
+_ANOMALY_NAMES     = {"get_spike_alerts", "get_rate_anomaly_report", "get_most_volatile_properties",
+                      "get_dashboard_kpis", "get_recently_changed_tracking"}
+_PROPERTY_NAMES    = {"get_property_snapshot", "get_property_rate_changes", "compare_properties",
+                      "search_properties", "get_availability_rate", "get_dashboard_kpis"}
+_GEO_NAMES         = {"geocode_address", "get_nearby_properties", "get_distance_km",
+                      "search_properties"}
+
+# Build subsets once at import time
+MARKET_TOOLS   = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _MARKET_NAMES]   + _EXPORT_TOOL
+ANOMALY_TOOLS  = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _ANOMALY_NAMES]  + _EXPORT_TOOL
+PROPERTY_TOOLS = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _PROPERTY_NAMES] + _EXPORT_TOOL
+GEO_TOOLS      = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _GEO_NAMES]      + _EXPORT_TOOL
+
+# Keywords used by agent_loop.select_tools() to pick the right subset
+_ANOMALY_KEYWORDS  = {"spike", "spikes", "crash", "anomaly", "anomalies", "volatile",
+                      "changes", "rate change", "increase", "decrease", "shift", "spike report",
+                      "threshold", "exceed", "25%", "unusual"}
+_PROPERTY_KEYWORDS = {"property", "properties", "listing", "listings", "unit", "units",
+                      "compare", "comparison", "availability", "available", "booked", "specific"}
+_GEO_KEYWORDS      = {"near", "nearby", "close to", "distance", "address", "location",
+                      "neighborhood", "area", "km", "mile", "minutes", "downtown"}
+
+
+def select_tools(user_query: str) -> list:
+    """
+    Pick the smallest tool subset that covers the user's intent.
+
+    Falls back to the full REAL_ESTATE_TOOLS list only when the query is
+    genuinely ambiguous across multiple intent categories (e.g. Geo + Property).
+
+    Typical savings: 2,000-2,500 tokens vs sending all 18 tools.
+    """
+    q = user_query.lower()
+
+    geo_hit      = any(kw in q for kw in _GEO_KEYWORDS)
+    anomaly_hit  = any(kw in q for kw in _ANOMALY_KEYWORDS)
+    property_hit = any(kw in q for kw in _PROPERTY_KEYWORDS)
+
+    # Geo queries that also mention properties (e.g. "find properties near Brickell")
+    if geo_hit and property_hit:
+        return REAL_ESTATE_TOOLS
+
+    # Anomaly queries take precedence when anomaly terms like "spike", "volatile" are present
+    if anomaly_hit:
+        return ANOMALY_TOOLS
+
+    if geo_hit:
+        return GEO_TOOLS
+
+    if property_hit:
+        return PROPERTY_TOOLS
+
+    # Default: market overview (covers broad questions like "how is the market?")
+    return MARKET_TOOLS

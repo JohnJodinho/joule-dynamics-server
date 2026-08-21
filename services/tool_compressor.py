@@ -19,7 +19,8 @@ from config import MAPBOX_ACCESS_TOKEN
 
 logger = setup_logger(__name__)
 
-_MAX_ROWS = 50   # Maximum rows delivered to LLM from any single tool call
+_MAX_ROWS = 30         # Maximum rows per tool result (was 50)
+_MAX_RESULT_CHARS = 2000  # Hard char cap per compressed result (~500 tokens)
 
 
 def compress_tool_output(func_name: str, db_result: dict) -> str:
@@ -97,7 +98,20 @@ def compress_tool_output(func_name: str, db_result: dict) -> str:
         f"\n[Truncated to {_MAX_ROWS} rows. Advise user to narrow date range or add filters.]"
         if truncated else ""
     )
-    return f"{header_str}{buf.getvalue().strip()}{truncation_notice}"
+    result_str = f"{header_str}{buf.getvalue().strip()}{truncation_notice}"
+    # Hard cap: prevent any single tool result from exceeding budget
+    if len(result_str) > _MAX_RESULT_CHARS:
+        lines = result_str.split("\n")
+        capped = []
+        total = 0
+        for line in lines:
+            if total + len(line) > _MAX_RESULT_CHARS:
+                capped.append("[Result capped at 2000 chars. Advise user to narrow filters.]")
+                break
+            capped.append(line)
+            total += len(line)
+        result_str = "\n".join(capped)
+    return result_str
 
 
 # ─── GEOCODE HANDLER (Mapbox API) ─────────────────────────────────────────────

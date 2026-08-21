@@ -44,7 +44,7 @@ from services.tool_executor import (
 )
 from services.tool_compressor import compress_tool_output
 from services.supabase_service import search_methodology_rag
-from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS
+from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS, select_tools
 
 logger = setup_logger(__name__)
 
@@ -175,14 +175,24 @@ async def run_agent_loop(
         response_message = None
 
         # ── Brain call (primary + fallback) ───────────────────────────────────
+        # Synthesis detection: strip tools + raise max_tokens when we already
+        # have tool results and the last message is a tool result. The model
+        # has all data it needs and should write the reply, not call more tools.
+        last_is_tool = bool(messages) and messages[-1].get('role') == 'tool'
+        has_data = bool(tool_results) and last_is_tool
+        tools_now = None if has_data else active_tools
+        choice_now = 'none' if has_data else ('auto' if active_tools else 'none')
+        tokens_now = 2000 if has_data else 300  # tool-call JSON is <30 tokens
+        if has_data:
+            logger.info('[agent_loop] synthesis mode: tools stripped, max_tokens=2000')
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=active_tools if active_tools else None,
-                    tool_choice="auto" if active_tools else "none",
-                    max_tokens=600 if active_tools else 1000,
+                    tools=tools_now,
+                    tool_choice=choice_now,
+                    max_tokens=tokens_now,
                     temperature=0.2,
                 )
                 response_message = brain_res.choices[0].message
@@ -268,7 +278,7 @@ async def run_agent_loop(
                 messages=synth_messages,
                 tools=None,
                 tool_choice="none",
-                max_tokens=1000,
+                max_tokens=2000,
                 temperature=0.2,
             )
             return final_res.choices[0].message.content
@@ -315,14 +325,19 @@ async def run_agent_loop_streaming(
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         response_message = None
 
+        last_is_tool = bool(messages) and messages[-1].get('role') == 'tool'
+        has_data = bool(tool_results) and last_is_tool
+        tools_now = None if has_data else active_tools
+        choice_now = 'none' if has_data else ('auto' if active_tools else 'none')
+        tokens_now = 2000 if has_data else 300
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=active_tools if active_tools else None,
-                    tool_choice="auto" if active_tools else "none",
-                    max_tokens=600,
+                    tools=tools_now,
+                    tool_choice=choice_now,
+                    max_tokens=tokens_now,
                     temperature=0.2,
                 )
                 response_message = brain_res.choices[0].message
@@ -453,6 +468,31 @@ def extract_clarification_options(reply: str) -> tuple[str, list[str]]:
     return reply, suggested_actions
 
 
+
+# ─── HISTORY COMPRESSOR ───────────────────────────────────────────────────────
+
+MAX_HISTORY_CHARS = 400  # Per-turn cap for stored assistant replies
+
+
+def _compress_for_history(reply: str) -> str:
+    """
+    Strip heavy markdown formatting from an assistant reply before storing in session.
+    Preserves table cell contents and key factual values while removing table borders,
+    formatting markup, code fences, and redundant whitespace.
+    """
+    # Remove table divider lines like |---|---| or |:---:|
+    text = re.sub(r"\|[\s\-:]+\|[\s\-:|]*", " ", reply)
+    # Replace table column separator pipes with commas/spaces
+    text = re.sub(r"\|", " , ", text)
+    # Remove markdown headers, bold, italic, code fences, blockquotes, bullets
+    text = re.sub(r"[*#`>\-~_]+", " ", text)
+    # Collapse whitespace
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > MAX_HISTORY_CHARS:
+        return text[:MAX_HISTORY_CHARS] + "\u2026"
+    return text
+
+
 # ─── PUBLIC ENTRY POINT ───────────────────────────────────────────────────────
 
 
@@ -513,10 +553,12 @@ async def process_chat_message(
                 }
             )
 
-        # STEP 4: Select tools
+        # STEP 4: Select tools — use keyword-based subset to minimize tool definition tokens
+        # select_tools() picks 4-6 relevant tools instead of sending all 18 (~3,130 tokens)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = REAL_ESTATE_TOOLS
+            active_tools = select_tools(user_query)
+            logger.info(f"[process_chat] selected {len(active_tools)} tools for classification={classification}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
 
@@ -531,8 +573,12 @@ async def process_chat_message(
         ):
             final_reply = _REPLY_FALLBACK
 
-        # STEP 6: Store assistant reply in session
-        append_message(session_id, {"role": "assistant", "content": final_reply})
+        # STEP 6: Store compressed reply in session (full reply returned to user)
+        # Storing full markdown in history triples token cost per turn.
+        append_message(session_id, {
+            "role": "assistant",
+            "content": _compress_for_history(final_reply),
+        })
 
         # STEP 7: Strip clarification options from reply text
         final_reply, suggested_actions = extract_clarification_options(final_reply)
@@ -605,10 +651,11 @@ async def stream_chat_message(
                 }
             )
 
-        # STEP 4: Tools
+        # STEP 4: Tools — keyword-based subset selection
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = REAL_ESTATE_TOOLS
+            active_tools = select_tools(user_query)
+            logger.info(f"[stream_chat] selected {len(active_tools)} tools for classification={classification}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
 
@@ -623,7 +670,10 @@ async def stream_chat_message(
                 full_reply_parts.append(event["token"])
             yield event
 
-        # STEP 6: Persist assembled reply to session
+        # STEP 6: Persist compressed reply to session (full text was streamed to user)
         full_reply = "".join(full_reply_parts)
         if full_reply:
-            append_message(session_id, {"role": "assistant", "content": full_reply})
+            append_message(session_id, {
+                "role": "assistant",
+                "content": _compress_for_history(full_reply),
+            })
