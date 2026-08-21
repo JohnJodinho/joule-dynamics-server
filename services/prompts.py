@@ -23,7 +23,10 @@ Analyze the user query and classify it into EXACTLY ONE of six classifications:
 6. "COMMERCIAL_HANDOFF": Query asks about getting started, hiring Joule Dynamics, custom builds, custom dashboards, pricing for software, or requests tracking for their own specific portfolio outside the demo scope.
 
 Respond ONLY with valid JSON matching this schema:
-{"classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF", "reason": "1-sentence justification"}
+{
+    "classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF", 
+    "reason": "1-sentence justification"
+}
 """
 
 # ─── SYNTHESIS PROMPT — CORE (always included) ────────────────────────────────
@@ -102,6 +105,7 @@ When a user asks about custom builds, deploying this system for their business, 
 
 
 # ─── COMPOSER ─────────────────────────────────────────────────────────────────
+
 
 def build_system_prompt(classification: str) -> str:
     """
