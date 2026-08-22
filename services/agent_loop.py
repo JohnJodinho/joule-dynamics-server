@@ -265,19 +265,29 @@ async def run_agent_loop(
                 {
                     "role": "system",
                     "content": (
-                        "Synthesize the real estate data gathered above into a clear, "
-                        "concise Markdown reply for the user. Do NOT call any more tools."
+                        "Synthesize all the real estate data gathered above into a clear, helpful Markdown reply. "
+                        "If the user requested multi-step actions or further inquiries that could not be fully completed "
+                        "within this turn (such as generating a downloadable export report, comparing specific listings, deep dive into volatility, or geocoding proximity), "
+                        "synthesize the findings obtained so far and invoke the `suggest_actions` tool with proactive next-step choices "
+                        "(e.g. ['Generate Download Report', 'Compare Listings', 'Check Volatility']) so the user can easily continue the workflow in the next message."
                     ),
                 }
             ]
             final_res = await groq_call(
                 model=model,
                 messages=synth_messages,
-                tools=None,
-                tool_choice="none",
+                tools=[SUGGEST_ACTIONS_TOOL],
+                tool_choice="auto",
                 max_tokens=2500,
                 temperature=0.2,
             )
+            msg = final_res.choices[0].message
+            if getattr(msg, "tool_calls", None):
+                for tc in msg.tool_calls:
+                    if tc.function.name == "suggest_actions" and suggested_actions_out is not None:
+                        fn_args = parse_tool_args(tc.function.arguments)
+                        actions = fn_args.get("actions") or fn_args.get("options") or []
+                        suggested_actions_out.extend(actions)
             return final_res.choices[0].message.content
         except Exception as exc:
             failed_gen = extract_failed_generation(exc)
@@ -402,7 +412,13 @@ async def run_agent_loop_streaming(
             synth_messages = list(messages) + [
                 {
                     "role": "system",
-                    "content": "Synthesize the real estate data gathered above into a clear Markdown reply. Do NOT call any more tools.",
+                    "content": (
+                        "Synthesize all the real estate data gathered above into a clear, helpful Markdown reply. "
+                        "If the user requested multi-step actions or further inquiries that could not be fully completed "
+                        "within this turn (such as generating a downloadable export report, comparing specific listings, deep dive into volatility, or geocoding proximity), "
+                        "synthesize the findings obtained so far and invoke the `suggest_actions` tool with proactive next-step choices "
+                        "(e.g. ['Generate Download Report', 'Compare Listings', 'Check Volatility']) so the user can easily continue the workflow in the next message."
+                    ),
                 }
             ]
 
@@ -413,6 +429,8 @@ async def run_agent_loop_streaming(
                 lambda: _gc.chat.completions.create(
                     model=model,
                     messages=synth_messages,
+                    tools=[SUGGEST_ACTIONS_TOOL],
+                    tool_choice="auto",
                     temperature=0.2,
                     max_tokens=2500,
                     stream=True,
@@ -559,10 +577,19 @@ async def process_chat_message(
                 }
             )
 
-        # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
+        # STEP 4: Dynamic Tool Discovery (Context-Enriched Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = discover_tools(user_query, categories=tool_categories, top_k=4)
+            # Context enrichment for short/ambiguous queries (e.g. 'Miami' following a clarification)
+            discovery_query = user_query
+            if len(user_query.strip()) < 25 and len(messages) > 2:
+                # Find previous user message
+                for prev_msg in reversed(messages[:-1]):
+                    if prev_msg.get("role") == "user":
+                        prev_content = prev_msg.get("content", "")
+                        discovery_query = f"{prev_content} {user_query}"
+                        break
+            active_tools = discover_tools(discovery_query, categories=tool_categories, top_k=4)
             logger.info(f"[process_chat] discovered {len(active_tools)} tools for classification={classification} categories={tool_categories}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
@@ -663,10 +690,17 @@ async def stream_chat_message(
                 }
             )
 
-        # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
+        # STEP 4: Dynamic Tool Discovery (Context-Enriched Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = discover_tools(user_query, categories=tool_categories, top_k=4)
+            discovery_query = user_query
+            if len(user_query.strip()) < 25 and len(messages) > 2:
+                for prev_msg in reversed(messages[:-1]):
+                    if prev_msg.get("role") == "user":
+                        prev_content = prev_msg.get("content", "")
+                        discovery_query = f"{prev_content} {user_query}"
+                        break
+            active_tools = discover_tools(discovery_query, categories=tool_categories, top_k=4)
             logger.info(f"[stream_chat] discovered {len(active_tools)} tools for classification={classification} categories={tool_categories}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
