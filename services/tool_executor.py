@@ -65,6 +65,14 @@ async def execute_tool_by_name(func_name: str, func_args: dict) -> dict:
     generate_data_export) are handled here. All other tool names are forwarded
     to the Supabase RPC layer.
     """
+    if func_name == "suggest_actions":
+        actions = func_args.get("actions") or func_args.get("options") or []
+        return {
+            "status": "success",
+            "message": "Interactive action buttons registered for user.",
+            "actions": actions,
+        }
+
     if func_name == "generate_contact_buttons":
         raw_message = func_args.get("message", "Hi, I'd like to discuss a custom build.")
         encoded_message = urllib.parse.quote(raw_message)

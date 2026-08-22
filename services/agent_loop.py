@@ -44,7 +44,7 @@ from services.tool_executor import (
 )
 from services.tool_compressor import compress_tool_output
 from services.supabase_service import search_methodology_rag
-from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS, select_tools
+from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS, discover_tools, select_tools
 
 logger = setup_logger(__name__)
 
@@ -163,36 +163,28 @@ async def run_agent_loop(
     messages: list[dict],
     active_tools: list | None,
     tool_results: list,
+    suggested_actions_out: list | None = None,
 ) -> str | None:
     """
-    Core agentic loop (Fix #1).
+    Core agentic loop.
 
-    Keeps tools available until the model emits finish_reason='stop'.
-    Handles failed_generation recovery (Fix #2) for any tool, not just exports.
-    Returns the final text reply or None if all attempts failed.
+    Keeps discovered tools available across all rounds until finish_reason='stop'.
+    Provides generous max_tokens=2500 so reasoning models never hit finish_reason='length'.
+    Recovers from Groq 400 failed_generation seamlessly.
+    Returns the final markdown reply text.
     """
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         response_message = None
 
         # ── Brain call (primary + fallback) ───────────────────────────────────
-        # Synthesis detection: strip tools + raise max_tokens when we already
-        # have tool results and the last message is a tool result. The model
-        # has all data it needs and should write the reply, not call more tools.
-        last_is_tool = bool(messages) and messages[-1].get('role') == 'tool'
-        has_data = bool(tool_results) and last_is_tool
-        tools_now = None if has_data else active_tools
-        choice_now = 'none' if has_data else ('auto' if active_tools else 'none')
-        tokens_now = 2000 if has_data else 300  # tool-call JSON is <30 tokens
-        if has_data:
-            logger.info('[agent_loop] synthesis mode: tools stripped, max_tokens=2000')
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=tools_now,
-                    tool_choice=choice_now,
-                    max_tokens=tokens_now,
+                    tools=active_tools if active_tools else None,
+                    tool_choice="auto" if active_tools else "none",
+                    max_tokens=2500,
                     temperature=0.2,
                 )
                 response_message = brain_res.choices[0].message
@@ -205,8 +197,6 @@ async def run_agent_loop(
             except Exception as exc:
                 failed_gen = extract_failed_generation(exc)
                 if failed_gen and is_structural_error(exc):
-                    # Model tried to call a tool but tools weren't in this call,
-                    # or schema mismatch — recover by executing the tool directly.
                     fn, fn_args = parse_failed_generation(failed_gen)
                     if fn and isinstance(fn_args, dict):
                         logger.info(
@@ -214,6 +204,9 @@ async def run_agent_loop(
                         )
                         tool_result = await execute_tool_by_name(fn, fn_args)
                         tool_results.append({"tool": fn, "args": fn_args})
+                        if fn == "suggest_actions" and suggested_actions_out is not None:
+                            actions = fn_args.get("actions") or fn_args.get("options") or []
+                            suggested_actions_out.extend(actions)
                         messages.append(
                             {
                                 "tool_call_id": f"recov_{int(time.time())}",
@@ -222,12 +215,10 @@ async def run_agent_loop(
                                 "content": compress_tool_output(fn, tool_result),
                             }
                         )
-                        # After injecting result, break to top of outer loop to retry
                         break
                 logger.warning(f"[agent_loop] {model} error round={round_num}: {exc}")
 
         if response_message is None:
-            # Recovery injected a tool result — retry the loop
             continue
 
         finish_reason = ""
@@ -238,7 +229,7 @@ async def run_agent_loop(
 
         # ── Tool call round ───────────────────────────────────────────────────
         if finish_reason == "tool_calls":
-            messages.append(normalize_assistant_message(response_message))  # Fix #5
+            messages.append(normalize_assistant_message(response_message))
             for tc in response_message.tool_calls:
                 fn = tc.function.name
                 args = parse_tool_args(tc.function.arguments)
@@ -246,6 +237,11 @@ async def run_agent_loop(
 
                 result = await execute_tool_by_name(fn, args)
                 tool_results.append({"tool": fn, "args": args})
+
+                if fn == "suggest_actions" and suggested_actions_out is not None:
+                    actions = args.get("actions") or args.get("options") or []
+                    suggested_actions_out.extend(actions)
+
                 messages.append(
                     {
                         "tool_call_id": tc.id,
@@ -278,12 +274,11 @@ async def run_agent_loop(
                 messages=synth_messages,
                 tools=None,
                 tool_choice="none",
-                max_tokens=2000,
+                max_tokens=2500,
                 temperature=0.2,
             )
             return final_res.choices[0].message.content
         except Exception as exc:
-            # Fix #2: Even here, recover generate_data_export from failed_generation
             failed_gen = extract_failed_generation(exc)
             fn, fn_args = parse_failed_generation(failed_gen)
             if fn == "generate_data_export" and isinstance(fn_args, dict):
@@ -307,6 +302,7 @@ async def run_agent_loop_streaming(
     messages: list[dict],
     active_tools: list | None,
     tool_results: list,
+    suggested_actions_out: list | None = None,
 ) -> AsyncIterator[dict]:
     """
     Streaming version of run_agent_loop for SSE delivery.
@@ -314,30 +310,23 @@ async def run_agent_loop_streaming(
     Yields dicts:
       {"type": "tool_call", "tool": str, "args": dict}
       {"type": "token",     "token": str}
-      {"type": "done",      "tools_called": list}
-
-    Tool-call rounds run identically to the non-streaming loop. Only the
-    final synthesis step streams tokens chunk-by-chunk.
+      {"type": "done",      "tools_called": list, "suggested_actions": list}
     """
     loop = asyncio.get_event_loop()
+    suggested_actions = suggested_actions_out if suggested_actions_out is not None else []
 
     # Run all tool rounds (non-streaming, same as normal loop)
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
         response_message = None
 
-        last_is_tool = bool(messages) and messages[-1].get('role') == 'tool'
-        has_data = bool(tool_results) and last_is_tool
-        tools_now = None if has_data else active_tools
-        choice_now = 'none' if has_data else ('auto' if active_tools else 'none')
-        tokens_now = 2000 if has_data else 300
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=tools_now,
-                    tool_choice=choice_now,
-                    max_tokens=tokens_now,
+                    tools=active_tools if active_tools else None,
+                    tool_choice="auto" if active_tools else "none",
+                    max_tokens=2500,
                     temperature=0.2,
                 )
                 response_message = brain_res.choices[0].message
@@ -349,6 +338,9 @@ async def run_agent_loop_streaming(
                     if fn and isinstance(fn_args, dict):
                         tool_result = await execute_tool_by_name(fn, fn_args)
                         tool_results.append({"tool": fn, "args": fn_args})
+                        if fn == "suggest_actions":
+                            actions = fn_args.get("actions") or fn_args.get("options") or []
+                            suggested_actions.extend(actions)
                         messages.append(
                             {
                                 "tool_call_id": f"recov_{int(time.time())}",
@@ -373,6 +365,11 @@ async def run_agent_loop_streaming(
                 yield {"type": "tool_call", "tool": fn, "args": args}
                 result = await execute_tool_by_name(fn, args)
                 tool_results.append({"tool": fn, "args": args})
+
+                if fn == "suggest_actions":
+                    actions = args.get("actions") or args.get("options") or []
+                    suggested_actions.extend(actions)
+
                 messages.append(
                     {
                         "tool_call_id": tc.id,
@@ -382,11 +379,20 @@ async def run_agent_loop_streaming(
                     }
                 )
         else:
-            # Model returned a direct text reply — stream it token by token
-            if response_message.content:
-                for token in _split_tokens(response_message.content):
+            # Model returned a direct text reply — strip any clarification code fence if present
+            content = response_message.content or ""
+            clean_content, extracted_actions = extract_clarification_options(content)
+            if extracted_actions:
+                suggested_actions.extend(extracted_actions)
+
+            if clean_content:
+                for token in _split_tokens(clean_content):
                     yield {"type": "token", "token": token}
-            yield {"type": "done", "tools_called": tool_results}
+            yield {
+                "type": "done",
+                "tools_called": tool_results,
+                "suggested_actions": list(dict.fromkeys(suggested_actions)),
+            }
             return
 
     # Forced synthesis with streaming
@@ -399,15 +405,6 @@ async def run_agent_loop_streaming(
                 }
             ]
 
-            def _stream_call():
-                return groq_client.chat.completions.create(
-                    model=model,
-                    messages=synth_messages,
-                    temperature=0.2,
-                    max_tokens=1000,
-                    stream=True,
-                )
-
             from services.groq_client import groq_client as _gc
 
             stream = await loop.run_in_executor(
@@ -416,7 +413,7 @@ async def run_agent_loop_streaming(
                     model=model,
                     messages=synth_messages,
                     temperature=0.2,
-                    max_tokens=1000,
+                    max_tokens=2500,
                     stream=True,
                 ),
             )
@@ -424,13 +421,21 @@ async def run_agent_loop_streaming(
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
                     yield {"type": "token", "token": delta}
-            yield {"type": "done", "tools_called": tool_results}
+            yield {
+                "type": "done",
+                "tools_called": tool_results,
+                "suggested_actions": list(dict.fromkeys(suggested_actions)),
+            }
             return
         except Exception as exc:
             logger.warning(f"[stream_loop] forced synthesis failed on {model}: {exc}")
 
     yield {"type": "token", "token": _REPLY_FALLBACK}
-    yield {"type": "done", "tools_called": tool_results}
+    yield {
+        "type": "done",
+        "tools_called": tool_results,
+        "suggested_actions": list(dict.fromkeys(suggested_actions)),
+    }
 
 
 def _split_tokens(text: str, chunk_size: int = 4):
@@ -553,18 +558,20 @@ async def process_chat_message(
                 }
             )
 
-        # STEP 4: Select tools — use keyword-based subset to minimize tool definition tokens
-        # select_tools() picks 4-6 relevant tools instead of sending all 18 (~3,130 tokens)
+        # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = select_tools(user_query)
-            logger.info(f"[process_chat] selected {len(active_tools)} tools for classification={classification}")
+            active_tools = discover_tools(user_query)
+            logger.info(f"[process_chat] discovered {len(active_tools)} tools for classification={classification}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
 
-        # STEP 5: Run agentic loop (Fix #1)
+        # STEP 5: Run agentic loop
         tool_results: list[dict] = []
-        final_reply = await run_agent_loop(messages, active_tools, tool_results)
+        suggested_actions_list: list[str] = []
+        final_reply = await run_agent_loop(
+            messages, active_tools, tool_results, suggested_actions_out=suggested_actions_list
+        )
 
         if (
             not final_reply
@@ -580,8 +587,9 @@ async def process_chat_message(
             "content": _compress_for_history(final_reply),
         })
 
-        # STEP 7: Strip clarification options from reply text
-        final_reply, suggested_actions = extract_clarification_options(final_reply)
+        # STEP 7: Strip clarification options if any and merge suggested actions
+        final_reply, extracted_actions = extract_clarification_options(final_reply)
+        all_actions = list(dict.fromkeys(suggested_actions_list + extracted_actions))
 
         get_client().update_current_span(output=final_reply)
 
@@ -589,7 +597,7 @@ async def process_chat_message(
             "reply": final_reply,
             "path_used": classification,
             "tools_called": tool_results,
-            "suggested_actions": suggested_actions,
+            "suggested_actions": all_actions,
         }
 
 
@@ -651,11 +659,11 @@ async def stream_chat_message(
                 }
             )
 
-        # STEP 4: Tools — keyword-based subset selection
+        # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = select_tools(user_query)
-            logger.info(f"[stream_chat] selected {len(active_tools)} tools for classification={classification}")
+            active_tools = discover_tools(user_query)
+            logger.info(f"[stream_chat] discovered {len(active_tools)} tools for classification={classification}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
 

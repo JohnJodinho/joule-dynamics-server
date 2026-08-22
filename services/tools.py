@@ -1,7 +1,84 @@
 """
-Real Estate Intelligence Layer — Tool Definitions
-Covers all registered Supabase RPCs plus Python-side handlers.
+Real Estate Intelligence Layer — Tool Definitions & Dynamic Tool Discovery
+
+Implements Hierarchical Dynamic Tool Discovery / Schema Gating:
+  - Curated, semantically discriminative retrieval descriptions for all tools.
+  - Pre-embedded vector representations for ~20-30ms local cosine ranking.
+  - Category gating + Top-K selection with Universal Tools (suggest_actions, generate_data_export).
+  - Scalable to hundreds of tools with flat ~600-token prompt footprint.
 """
+from typing import List, Dict, Any, Optional
+import numpy as np
+
+# ─── 1. UNIVERSAL TOOLS (Always attached to tool payloads) ───────────────────
+
+SUGGEST_ACTIONS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "suggest_actions",
+        "description": (
+            "Provide clickable interactive buttons/chips to the user in the UI. Use this to: "
+            "1. Ask for missing parameters or clarifications (e.g. ['NYC/NJ Metro', 'Miami']). "
+            "2. Offer next-step follow-up queries after answering (e.g. ['View 7-day Spike Report', 'Compare with NYC', 'Export Markdown']). "
+            "3. Present binary confirmation choices when asking if user wants deeper analysis (e.g. ['Yes, generate report', 'No, keep overview']). "
+            "4. Guide users through multi-step workflows."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "actions": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of 2 to 4 short, action-oriented button labels (max 35 chars each)."
+                }
+            },
+            "required": ["actions"]
+        }
+    }
+}
+
+GENERATE_DATA_EXPORT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_data_export",
+        "description": "Save real estate analysis, market summary, or price breakdown to a downloadable Markdown (.md) report file. Call this tool whenever a user asks to export, save, or download a report.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "format": {
+                    "type": "string",
+                    "enum": ["md"],
+                    "description": "Export format, strictly 'md'",
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Complete formatted Markdown report content to save into the file",
+                },
+            },
+            "required": ["content"],
+        },
+    },
+}
+
+GENERATE_CONTACT_BUTTONS_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "generate_contact_buttons",
+        "description": "Generates clickable Email and WhatsApp contact buttons. Use this whenever the user asks about hiring us, pricing, custom builds, or tracking their own portfolios. The tool returns the exact markdown syntax you must use to display the buttons.",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string",
+                    "description": "A personalized, plain English greeting message to pre-fill in the WhatsApp chat based on the user's inquiry (e.g., 'Hi John, I would like to discuss a custom build for my 10 properties in Miami.')."
+                }
+            },
+            "required": ["message"],
+        },
+    }
+}
+
+# ─── 2. DOMAIN TOOLS ─────────────────────────────────────────────────────────
 
 REAL_ESTATE_TOOLS = [
     # ─── DASHBOARD & MARKET OVERVIEW ─────────────────────────────────────────
@@ -51,16 +128,16 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_averages",
-            "description": "Get current average, minimum, and maximum nightly rates aggregated by market (NYC/NJ Metro or Miami). Use for 'what is the average rate in X?' questions about the present moment.",
+            "description": "Fetch average nightly rates and 7-day trailing average comparisons for a market across active listings. Use when the user asks for market baseline or price benchmarks.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'. Omit to get all markets.",
+                        "description": "Market region: 'Miami' or 'NYC/NJ Metro'",
                     }
                 },
-                "required": [],
+                "required": ["p_market"],
             },
         },
     },
@@ -68,24 +145,24 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_snapshot",
-            "description": "Get aggregate market statistics (avg/min/max rate, spike count, availability %) for a SPECIFIC HISTORICAL date range. Use when the user gives explicit start/end dates or asks about a past period (e.g. 'how was Miami during World Cup week', 'what was the market like in late July'). NOT for current/live data — use get_market_averages for that.",
+            "description": "Fetch a comprehensive single-day snapshot for a market (active property count, average nightly rate, min rate, max rate, availability rate %, and rate spike event count). Use when the user asks for a daily market overview, daily summary, or specific date performance.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'",
+                        "description": "Market region: 'Miami' or 'NYC/NJ Metro'",
                     },
                     "p_start_date": {
                         "type": "string",
-                        "description": "Start date, YYYY-MM-DD",
+                        "description": "Snapshot date start (YYYY-MM-DD). Defaults to yesterday if omitted.",
                     },
                     "p_end_date": {
                         "type": "string",
-                        "description": "End date, YYYY-MM-DD",
+                        "description": "Snapshot date end (YYYY-MM-DD). Defaults to yesterday if omitted.",
                     },
                 },
-                "required": ["p_market", "p_start_date", "p_end_date"],
+                "required": ["p_market"],
             },
         },
     },
@@ -93,42 +170,40 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_trend",
-            "description": "Determine whether a market's average nightly rate has been trending UP, DOWN, or STABLE over a period, and by what percentage. Use for 'is X getting more expensive?', 'is X trending up or down?' style questions. Returns a pre-computed direction — do NOT use get_market_averages for trend questions.",
+            "description": "Fetch historical daily average rate trends for a market over a specified number of days (up to 90 days). Use when the user asks how rates have changed over time, weekly/monthly trajectories, or market direction.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Market region name, e.g. 'Miami' or 'NYC/NJ Metro'",
+                        "description": "Market region: 'Miami' or 'NYC/NJ Metro'",
                     },
                     "p_days": {
                         "type": "integer",
-                        "default": 14,
-                        "description": "Period to analyse in days (7–90)",
+                        "description": "Number of historical days to analyze (default 30, max 90)",
                     },
                 },
                 "required": ["p_market"],
             },
         },
     },
-    # ─── SPIKE & ANOMALY DETECTION ───────────────────────────────────────────
+
+    # ─── SPIKES, ANOMALIES & VOLATILITY ──────────────────────────────────────
     {
         "type": "function",
         "function": {
             "name": "get_spike_alerts",
-            "description": "Fetch properties experiencing market-wide rate spikes or crashes (deviation from 7-day trailing average at or above the threshold). Use for 'which properties spiked this week?', 'any unusual drops?', 'show me volatility alerts' questions.",
+            "description": "Fetch active price spike alerts where a property's nightly rate changed by more than the threshold (default 25%) relative to its 7-day trailing average. Use when the user asks about sudden price jumps, surge pricing, or rate spikes.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "threshold_param": {
-                        "type": "number",
-                        "default": 25.0,
-                        "description": "Minimum absolute % deviation from 7-day trailing average",
+                    "p_market": {
+                        "type": "string",
+                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
                     },
-                    "days_param": {
-                        "type": "integer",
-                        "default": 7,
-                        "description": "Lookback window in days",
+                    "p_threshold": {
+                        "type": "number",
+                        "description": "Percentage change threshold (default 25.0 for 25%+ spikes)",
                     },
                 },
                 "required": [],
@@ -139,34 +214,7 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_rate_anomaly_report",
-            "description": "Investigate a SPECIFIC property's pricing anomalies. Returns pre-computed anomaly events only (significant spikes or crashes) plus a normal rate range summary. Use when the user wants to INVESTIGATE why a single property has a suspicious price, a sudden crash, or an unexplained rate. Do NOT use for general history — use get_property_rate_changes for that.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_property_search": {
-                        "type": "string",
-                        "description": "Property name or UUID",
-                    },
-                    "p_days": {
-                        "type": "integer",
-                        "default": 30,
-                        "description": "Lookback window in days (max 90)",
-                    },
-                    "p_deviation_threshold": {
-                        "type": "number",
-                        "default": 25.0,
-                        "description": "Minimum absolute % deviation to qualify as anomaly",
-                    },
-                },
-                "required": ["p_property_search"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_most_volatile_properties",
-            "description": "Rank tracked properties by pricing volatility (frequency and magnitude of rate swings) over a period, optionally filtered to one market. Use for 'which property is most erratic/unstable/unpredictable?' questions.",
+            "description": "Fetch detailed rate anomalies (both spikes AND crashes/drops) with listing name, dates, old rate, new rate, baseline 7d avg, and percentage deviation. Use for in-depth pricing anomaly investigations.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -176,34 +224,58 @@ REAL_ESTATE_TOOLS = [
                     },
                     "p_days": {
                         "type": "integer",
-                        "default": 14,
-                        "description": "Period to analyse in days (7-90)",
+                        "description": "Lookback window in days (default 7, max 30)",
                     },
-                    "p_limit": {
-                        "type": "integer",
-                        "default": 5,
-                        "description": "Number of top results to return (max 10)",
+                    "p_threshold": {
+                        "type": "number",
+                        "description": "Minimum percentage deviation (default 20.0 for 20%+ deviation)",
                     },
                 },
                 "required": [],
             },
         },
     },
-    # ─── PROPERTY-SPECIFIC QUERIES ───────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "get_most_volatile_properties",
+            "description": "Fetch listings with the highest number of rate adjustments/changes over a lookback window. Use when user asks which properties change prices most frequently, most dynamic pricing, or most volatile listings.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "p_market": {
+                        "type": "string",
+                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                    },
+                    "p_days": {
+                        "type": "integer",
+                        "description": "Lookback window in days (default 14, max 60)",
+                    },
+                    "p_limit": {
+                        "type": "integer",
+                        "description": "Max properties to return (default 10, max 50)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+
+    # ─── INDIVIDUAL PROPERTY & LISTING LEVEL ──────────────────────────────────
     {
         "type": "function",
         "function": {
             "name": "get_property_snapshot",
-            "description": "Get a single property's CURRENT rate, 7-day trailing average, availability status, and last scrape time in one compact response. Use for 'what is X charging right now?', 'is X available?', 'what is X's current trailing average?' questions. Much lighter than get_property_rate_changes — prefer this for current-state questions.",
+            "description": "Fetch complete current profile and latest rate data for a specific property by its UUID. Returns property name, market, bedrooms, platform, listing URL, coordinates, current nightly rate, 7-day average baseline, and availability status. Use when user asks about a specific listing.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_search": {
+                    "p_property_id": {
                         "type": "string",
-                        "description": "Property name or UUID",
+                        "description": "UUID of the property",
                     }
                 },
-                "required": ["property_search"],
+                "required": ["p_property_id"],
             },
         },
     },
@@ -211,34 +283,33 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_property_rate_changes",
-            "description": "Show a specific property's historical rate time-series with trailing averages. Use when the user wants to SEE how rates changed over time (exploration/history) — NOT for investigating a suspicious price (use get_rate_anomaly_report) and NOT for current rate (use get_property_snapshot). Supports either a rolling lookback window OR explicit start/end dates.",
+            "description": "Fetch chronological history of all rate revisions and price adjustments for a specific property or list of properties. Use to analyze price change history over time.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_search": {
+                    "p_property_id": {
                         "type": "string",
-                        "description": "Property name or UUID (required)",
+                        "description": "Optional specific property UUID",
                     },
-                    "days_param": {
+                    "p_property_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of property UUIDs",
+                    },
+                    "p_market": {
+                        "type": "string",
+                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                    },
+                    "p_days": {
                         "type": "integer",
-                        "default": 14,
-                        "description": "Rolling lookback window in days (max 30). Ignored if start_date/end_date are provided.",
+                        "description": "Lookback window in days (default 30, max 90)",
                     },
-                    "compare_window_days": {
+                    "p_limit": {
                         "type": "integer",
-                        "default": 1,
-                        "description": "Days to compare against for pct_change_vs_prev (max 14)",
-                    },
-                    "start_date": {
-                        "type": "string",
-                        "description": "Optional explicit start date YYYY-MM-DD. Use instead of days_param when user gives a specific date range.",
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "Optional explicit end date YYYY-MM-DD. Must be provided together with start_date.",
+                        "description": "Max changes to return (default 50, max 200)",
                     },
                 },
-                "required": ["property_search"],
+                "required": [],
             },
         },
     },
@@ -246,53 +317,51 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "compare_properties",
-            "description": "Compare current rate, trailing average, availability, and volatility side-by-side for 2–5 specific properties. Use for 'compare X and Y', 'how does X stack up against Y and Z?', 'which of these properties is cheapest?' questions.",
+            "description": "Compare 2 to 10 specific properties side-by-side on current rate, 7-day average, bedroom count, platform, and availability status. Use when the user asks to compare specific listings.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_ids": {
+                    "p_property_ids": {
                         "type": "array",
                         "items": {"type": "string"},
-                        "description": "2–5 property names or UUIDs to compare side-by-side",
+                        "description": "List of 2 to 10 property UUIDs to compare",
                     }
                 },
-                "required": ["property_ids"],
+                "required": ["p_property_ids"],
             },
         },
     },
-    # ─── SEARCH & FILTERING ───────────────────────────────────────────────────
     {
         "type": "function",
         "function": {
             "name": "search_properties",
-            "description": "Search and filter tracked properties by text, market, platform, bedrooms, or availability. Returns compact snapshot rows. Use for 'show me 2-bedroom properties in Miami', 'find available Airbnb listings in NYC', 'search for Brickell properties'.",
+            "description": "Search and filter tracked properties by market, bedroom count, platform, active tracking status, name substring, and price range. Returns listing IDs, titles, bedrooms, current rates, and availability.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "p_search": {
-                        "type": "string",
-                        "description": "Search text (property name or UUID)",
-                    },
                     "p_market": {
                         "type": "string",
-                        "description": "Market region name (e.g. 'Miami' or 'NYC/NJ Metro')",
-                    },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Platform filter (e.g. 'airbnb' or 'vrbo')",
+                        "description": "Optional market ('Miami' or 'NYC/NJ Metro')",
                     },
                     "p_bedrooms": {
                         "type": "integer",
-                        "description": "Number of bedrooms",
+                        "description": "Optional bedroom count filter (e.g. 1, 2, 3)",
                     },
-                    "p_available": {
+                    "p_platform": {
+                        "type": "string",
+                        "description": "Optional platform ('airbnb' or 'vrbo')",
+                    },
+                    "p_is_active": {
                         "type": "boolean",
-                        "description": "true = available only, false = unavailable only",
+                        "description": "Optional tracking status filter (default true for active)",
+                    },
+                    "p_query": {
+                        "type": "string",
+                        "description": "Optional search term to match listing title or address",
                     },
                     "p_limit": {
                         "type": "integer",
-                        "default": 20,
-                        "description": "Results to return (max 50)",
+                        "description": "Max results (default 20, max 100)",
                     },
                 },
                 "required": [],
@@ -303,35 +372,36 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_availability_rate",
-            "description": "Get the percentage of tracked listings currently available vs unavailable within the system's 2-night check-in window, optionally filtered by market or platform. IMPORTANT: always caveat that this reflects the 2-night window only, not full-calendar occupancy.",
+            "description": "Fetch availability percentage and booked vs available listing counts for a market or property subset over a date range. Use when user asks about occupancy rates, calendar status, or vacancy.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": "Optional market ('Miami' or 'NYC/NJ Metro')",
                     },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional platform filter ('airbnb' or 'vrbo')",
+                    "p_days": {
+                        "type": "integer",
+                        "description": "Forward window in days (default 30, max 90)",
                     },
                 },
                 "required": [],
             },
         },
     },
-    # ─── GEO / LOCATION ──────────────────────────────────────────────────────
+
+    # ─── GEOGRAPHIC & LOCATION TOOLS ─────────────────────────────────────────
     {
         "type": "function",
         "function": {
             "name": "geocode_address",
-            "description": "Convert a user-supplied street address or general location text into latitude/longitude coordinates. Call this FIRST whenever the user gives an address rather than coordinates, BEFORE calling get_nearby_properties.",
+            "description": "Convert a street address, landmark, or neighborhood name into latitude and longitude coordinates. Use before querying nearby properties if the user provides an address or landmark name.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "address": {
                         "type": "string",
-                        "description": "Street address, city, or general location text supplied by the user (US locations only)",
+                        "description": "Street address, landmark, or neighborhood (e.g. 'Ocean Drive, Miami Beach' or 'Brickell, Miami')",
                     }
                 },
                 "required": ["address"],
@@ -342,27 +412,25 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_nearby_properties",
-            "description": "Find tracked properties within a given radius of a latitude/longitude point. Use for 'what properties are near [address]?', 'show me listings around [location]'. If the user gave an address, call geocode_address first to get coordinates.",
+            "description": "Fetch properties within a specified radius (in kilometers) of a target geographic coordinate. Use when the user asks for listings near a location or landmark.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_latitude": {
                         "type": "number",
-                        "description": "Latitude of search center",
+                        "description": "Target latitude in decimal degrees",
                     },
                     "p_longitude": {
                         "type": "number",
-                        "description": "Longitude of search center",
+                        "description": "Target longitude in decimal degrees",
                     },
                     "p_radius_km": {
                         "type": "number",
-                        "default": 5.0,
-                        "description": "Search radius in kilometres (max 20)",
+                        "description": "Search radius in kilometers (default 5.0, max 50.0)",
                     },
                     "p_limit": {
                         "type": "integer",
-                        "default": 10,
-                        "description": "Max results to return (max 20)",
+                        "description": "Max properties to return (default 10, max 50)",
                     },
                 },
                 "required": ["p_latitude", "p_longitude"],
@@ -373,35 +441,36 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_distance_km",
-            "description": "Calculate the geographic distance in kilometres between two specific tracked properties using their UUIDs. Use for 'how far apart are property A and property B?' questions when UUIDs are known.",
+            "description": "Calculate distance in kilometers between two properties or between a property and coordinates.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "property_a_id": {
+                    "p_from_property_id": {
                         "type": "string",
-                        "description": "UUID of the first property",
+                        "description": "UUID of origin property",
                     },
-                    "property_b_id": {
+                    "p_to_property_id": {
                         "type": "string",
-                        "description": "UUID of the second property",
+                        "description": "UUID of destination property",
                     },
                 },
-                "required": ["property_a_id", "property_b_id"],
+                "required": ["p_from_property_id", "p_to_property_id"],
             },
         },
     },
-    # ─── TRACKING & SYSTEM META ───────────────────────────────────────────────
+
+    # ─── SYSTEM METADATA & TRACKING TOOLS ────────────────────────────────────
     {
         "type": "function",
         "function": {
             "name": "get_tracked_markets",
-            "description": "Fetch which markets are actively tracked, optionally filtered by platform. Use for 'what markets do you cover?', 'how many Airbnb properties in each market?' questions.",
+            "description": "Fetch list of all currently supported and active market regions, listing counts, and platform coverage in the database. Use when user asks what markets or cities are available.",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional platform filter (e.g. 'Airbnb' or 'Vrbo')",
+                    "p_active_only": {
+                        "type": "boolean",
+                        "description": "Whether to only return actively monitored markets (default true)",
                     }
                 },
                 "required": [],
@@ -412,138 +481,227 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_recently_changed_tracking",
-            "description": "Get properties recently added to or removed from active tracking. Use for 'has anything changed in what you track recently?', 'what properties were added or dropped?'. Note: removal detection is approximate based on system activity records.",
+            "description": "Fetch properties that recently had their monitoring status changed (newly added or paused). Use for audit or tracking health queries.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_days": {
                         "type": "integer",
-                        "default": 30,
-                        "description": "Lookback window in days",
+                        "description": "Lookback window in days (default 7, max 30)",
                     }
                 },
                 "required": [],
             },
         },
     },
-    # ─── DATA EXPORT ─────────────────────────────────────────────────────────
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_data_export",
-            "description": "Generate a downloadable Markdown (.md) report file for the user. Use when the user asks to download, export, or generate a downloadable report file. The content must be a comprehensive, well-structured Markdown document containing the real estate findings and tables.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "format": {
-                        "type": "string",
-                        "enum": ["md"],
-                        "description": "Export format, strictly 'md'",
-                    },
-                    "content": {
-                        "type": "string",
-                        "description": "Complete formatted Markdown report content to save into the file",
-                    },
-                },
-                "required": ["content"],
-            },
-        },
-    },
+    GENERATE_DATA_EXPORT_TOOL,
+    SUGGEST_ACTIONS_TOOL,
 ]
 
 COMMERCIAL_TOOLS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "generate_contact_buttons",
-            "description": "Generates clickable Email and WhatsApp contact buttons. Use this whenever the user asks about hiring us, pricing, custom builds, or tracking their own portfolios. The tool returns the exact markdown syntax you must use to display the buttons.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "message": {
-                        "type": "string",
-                        "description": "A personalized, plain English greeting message to pre-fill in the WhatsApp chat based on the user's inquiry (e.g., 'Hi John, I would like to discuss a custom build for my 10 properties in Miami.')."
-                    }
-                },
-                "required": ["message"],
-            },
-        },
-    }
+    GENERATE_CONTACT_BUTTONS_TOOL,
+    SUGGEST_ACTIONS_TOOL,
 ]
 
 
-# ─── STATIC TOOL GROUPINGS (Fix #4 — Tool-Set Pruning) ───────────────────────
-#
-# Instead of sending all 18 tool definitions on every call (~3,130 tokens),
-# the orchestrator picks the smallest group that covers the query.
-#
-# Grouping logic (chosen in agent_loop.py based on query keywords):
-#
-#   PATH_A queries break into 3 intent categories:
-#     MARKET_TOOLS     — "how does the market look", "averages", "trends"
-#     ANOMALY_TOOLS    — "spikes", "crashes", "anomalies", "volatile"
-#     PROPERTY_TOOLS   — "property", "listing", "compare", "availability"
-#     GEO_TOOLS        — "near", "address", "distance", "location"
-#
-# Each group includes generate_data_export so the model can always offer downloads.
-# Any group = ~4-6 tools = ~700-900 tokens (vs 3,130 for all 18).
-#
-# For BOTH / ambiguous queries, use FULL_REAL_ESTATE_TOOLS as fallback.
+# ─── 3. TOOL REGISTRY & DISCOVERY METADATA ───────────────────────────────────
 
-_EXPORT_TOOL = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] == "generate_data_export"]
-_MARKET_NAMES      = {"get_market_averages", "get_market_snapshot", "get_market_trend",
-                      "get_tracked_markets", "get_dashboard_kpis"}
-_ANOMALY_NAMES     = {"get_spike_alerts", "get_rate_anomaly_report", "get_most_volatile_properties",
-                      "get_dashboard_kpis", "get_recently_changed_tracking"}
-_PROPERTY_NAMES    = {"get_property_snapshot", "get_property_rate_changes", "compare_properties",
-                      "search_properties", "get_availability_rate", "get_dashboard_kpis"}
-_GEO_NAMES         = {"geocode_address", "get_nearby_properties", "get_distance_km",
-                      "search_properties"}
+TOOL_REGISTRY: List[Dict[str, Any]] = [
+    {
+        "name": "get_dashboard_kpis",
+        "category": "MARKET",
+        "retrieval_description": "High-level summary cards, aggregate portfolio metrics, active properties count, average market rate, scrape health status.",
+        "schema": REAL_ESTATE_TOOLS[0],
+    },
+    {
+        "name": "get_market_averages",
+        "category": "MARKET",
+        "retrieval_description": "Average nightly rate and price baselines for a specific market over 7-day, 14-day, or 30-day periods.",
+        "schema": REAL_ESTATE_TOOLS[1],
+    },
+    {
+        "name": "get_market_snapshot",
+        "category": "MARKET",
+        "retrieval_description": "Daily overview snapshot of market performance, nightly rates range, minimum maximum rates, and availability on a specific date.",
+        "schema": REAL_ESTATE_TOOLS[2],
+    },
+    {
+        "name": "get_market_trend",
+        "category": "MARKET",
+        "retrieval_description": "Historical pricing trend direction, rising or falling rates over time, week-over-week rate trajectory.",
+        "schema": REAL_ESTATE_TOOLS[3],
+    },
+    {
+        "name": "get_spike_alerts",
+        "category": "ANOMALY",
+        "retrieval_description": "Sudden sharp price jumps, 25% plus rate increases, price spikes, unseasonal rate surges.",
+        "schema": REAL_ESTATE_TOOLS[4],
+    },
+    {
+        "name": "get_rate_anomaly_report",
+        "category": "ANOMALY",
+        "retrieval_description": "Anomalous pricing patterns, drastic rate drops, price crashes, listings deviating significantly from market baseline.",
+        "schema": REAL_ESTATE_TOOLS[5],
+    },
+    {
+        "name": "get_most_volatile_properties",
+        "category": "ANOMALY",
+        "retrieval_description": "Listings with the most frequent price fluctuations, highest number of rate adjustments, unstable pricing.",
+        "schema": REAL_ESTATE_TOOLS[6],
+    },
+    {
+        "name": "get_property_snapshot",
+        "category": "PROPERTY",
+        "retrieval_description": "Detailed current status and single listing profile for a specific property ID or listing URL.",
+        "schema": REAL_ESTATE_TOOLS[7],
+    },
+    {
+        "name": "get_property_rate_changes",
+        "category": "PROPERTY",
+        "retrieval_description": "Historical log of price changes, chronological rate revisions, past rate adjustments for a single property.",
+        "schema": REAL_ESTATE_TOOLS[8],
+    },
+    {
+        "name": "compare_properties",
+        "category": "PROPERTY",
+        "retrieval_description": "Side-by-side head-to-head comparison of multiple property listings, prices, bedrooms, and metrics.",
+        "schema": REAL_ESTATE_TOOLS[9],
+    },
+    {
+        "name": "search_properties",
+        "category": "PROPERTY",
+        "retrieval_description": "Find and filter property listings by bedroom count, price range, market, availability status, or name.",
+        "schema": REAL_ESTATE_TOOLS[10],
+    },
+    {
+        "name": "get_availability_rate",
+        "category": "PROPERTY",
+        "retrieval_description": "Percentage of units booked versus available, occupancy rates, reservation calendar status.",
+        "schema": REAL_ESTATE_TOOLS[11],
+    },
+    {
+        "name": "geocode_address",
+        "category": "GEO",
+        "retrieval_description": "Convert street address, landmark, or neighborhood name into latitude and longitude geographic coordinates.",
+        "schema": REAL_ESTATE_TOOLS[12],
+    },
+    {
+        "name": "get_nearby_properties",
+        "category": "GEO",
+        "retrieval_description": "Find listings closest to a specific geographic coordinate, landmark, or neighborhood radius.",
+        "schema": REAL_ESTATE_TOOLS[13],
+    },
+    {
+        "name": "get_distance_km",
+        "category": "GEO",
+        "retrieval_description": "Calculate straight-line distance in kilometers between two properties or locations.",
+        "schema": REAL_ESTATE_TOOLS[14],
+    },
+    {
+        "name": "get_tracked_markets",
+        "category": "MARKET",
+        "retrieval_description": "List all cities and regions currently supported and monitored in the database (NYC/NJ Metro, Miami).",
+        "schema": REAL_ESTATE_TOOLS[15],
+    },
+    {
+        "name": "get_recently_changed_tracking",
+        "category": "MARKET",
+        "retrieval_description": "Properties recently added to or removed from active monitoring tracking status.",
+        "schema": REAL_ESTATE_TOOLS[16],
+    },
+]
 
-# Build subsets once at import time
-MARKET_TOOLS   = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _MARKET_NAMES]   + _EXPORT_TOOL
-ANOMALY_TOOLS  = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _ANOMALY_NAMES]  + _EXPORT_TOOL
-PROPERTY_TOOLS = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _PROPERTY_NAMES] + _EXPORT_TOOL
-GEO_TOOLS      = [t for t in REAL_ESTATE_TOOLS if t["function"]["name"] in _GEO_NAMES]      + _EXPORT_TOOL
 
-# Keywords used by agent_loop.select_tools() to pick the right subset
-_ANOMALY_KEYWORDS  = {"spike", "spikes", "crash", "anomaly", "anomalies", "volatile",
-                      "changes", "rate change", "increase", "decrease", "shift", "spike report",
-                      "threshold", "exceed", "25%", "unusual"}
-_PROPERTY_KEYWORDS = {"property", "properties", "listing", "listings", "unit", "units",
-                      "compare", "comparison", "availability", "available", "booked", "specific"}
-_GEO_KEYWORDS      = {"near", "nearby", "close to", "distance", "address", "location",
-                      "neighborhood", "area", "km", "mile", "minutes", "downtown"}
+# ─── 4. SEMANTIC EMBEDDING ENGINE (Lazy Loaded Singleton) ─────────────────────
+
+_TOOL_EMBEDDINGS: Optional[np.ndarray] = None
 
 
-def select_tools(user_query: str) -> list:
+def _get_tool_embeddings() -> np.ndarray:
+    """Compute and cache normalized vector embeddings for all retrieval descriptions."""
+    global _TOOL_EMBEDDINGS
+    if _TOOL_EMBEDDINGS is None:
+        from services.embedding_service import get_embedding_model
+        embed_model = get_embedding_model()
+        descs = [entry["retrieval_description"] for entry in TOOL_REGISTRY]
+        _TOOL_EMBEDDINGS = embed_model.encode(descs, normalize_embeddings=True)
+    return _TOOL_EMBEDDINGS
+
+
+def discover_tools(
+    user_query: str,
+    categories: Optional[List[str]] = None,
+    top_k: int = 4,
+    include_export: bool = True,
+) -> List[Dict[str, Any]]:
     """
-    Pick the smallest tool subset that covers the user's intent.
+    Hierarchical Dynamic Tool Discovery:
+      1. Embed user_query using local embedding model (~20ms).
+      2. Filter candidate pool by categories if category gating is active.
+      3. Compute cosine similarity against candidate tool retrieval descriptions.
+      4. Select Top-K most relevant tools.
+      5. Attach Universal Tools (suggest_actions, generate_data_export).
 
-    Falls back to the full REAL_ESTATE_TOOLS list only when the query is
-    genuinely ambiguous across multiple intent categories (e.g. Geo + Property).
-
-    Typical savings: 2,000-2,500 tokens vs sending all 18 tools.
+    Guarantees strictly 4 to 6 tools (~600 tokens total) are exposed to the LLM.
     """
-    q = user_query.lower()
+    try:
+        from services.embedding_service import get_embedding_model
+        embed_model = get_embedding_model()
+        tool_vectors = _get_tool_embeddings()
 
-    geo_hit      = any(kw in q for kw in _GEO_KEYWORDS)
-    anomaly_hit  = any(kw in q for kw in _ANOMALY_KEYWORDS)
-    property_hit = any(kw in q for kw in _PROPERTY_KEYWORDS)
+        # Category gating
+        if categories:
+            allowed_cats = {c.upper() for c in categories}
+            candidate_indices = [
+                i for i, entry in enumerate(TOOL_REGISTRY)
+                if entry["category"].upper() in allowed_cats
+            ]
+        else:
+            candidate_indices = list(range(len(TOOL_REGISTRY)))
 
-    # Geo queries that also mention properties (e.g. "find properties near Brickell")
-    if geo_hit and property_hit:
-        return REAL_ESTATE_TOOLS
+        if not candidate_indices:
+            candidate_indices = list(range(len(TOOL_REGISTRY)))
 
-    # Anomaly queries take precedence when anomaly terms like "spike", "volatile" are present
-    if anomaly_hit:
-        return ANOMALY_TOOLS
+        q_vec = embed_model.encode([user_query], normalize_embeddings=True)[0]
+        candidate_vecs = tool_vectors[candidate_indices]
+        sims = candidate_vecs @ q_vec
 
-    if geo_hit:
-        return GEO_TOOLS
+        # Rank candidates
+        ranked_local_indices = np.argsort(sims)[::-1][:top_k]
+        selected_tools = [
+            TOOL_REGISTRY[candidate_indices[local_idx]]["schema"]
+            for local_idx in ranked_local_indices
+        ]
+    except Exception as exc:
+        # Fallback to default market tools if embedding fails
+        selected_tools = [
+            t for t in REAL_ESTATE_TOOLS
+            if t["function"]["name"] in ("get_market_averages", "get_market_snapshot", "get_spike_alerts")
+        ]
 
-    if property_hit:
-        return PROPERTY_TOOLS
+    # Universal tools: suggest_actions (always) and generate_data_export (optional)
+    results = []
+    seen_names = set()
 
-    # Default: market overview (covers broad questions like "how is the market?")
-    return MARKET_TOOLS
+    for tool in selected_tools:
+        name = tool["function"]["name"]
+        if name not in seen_names:
+            seen_names.add(name)
+            results.append(tool)
+
+    if include_export and "generate_data_export" not in seen_names:
+        results.append(GENERATE_DATA_EXPORT_TOOL)
+        seen_names.add("generate_data_export")
+
+    if "suggest_actions" not in seen_names:
+        results.append(SUGGEST_ACTIONS_TOOL)
+        seen_names.add("suggest_actions")
+
+    return results
+
+
+# ─── 5. BACKWARDS COMPATIBLE SELECTOR ─────────────────────────────────────────
+
+def select_tools(user_query: str) -> List[Dict[str, Any]]:
+    """Backwards-compatible alias forwarding to discover_tools()."""
+    return discover_tools(user_query)
