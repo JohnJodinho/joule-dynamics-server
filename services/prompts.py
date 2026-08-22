@@ -24,9 +24,17 @@ Analyze the user query and classify it into EXACTLY ONE of six classifications:
 
 Respond ONLY with valid JSON matching this schema:
 {
-    "classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF", 
+    "classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF",
+    "tool_categories": ["MARKET" | "ANOMALY" | "PROPERTY" | "GEO"],
     "reason": "1-sentence justification"
 }
+INSTRUCTIONS FOR tool_categories:
+- If classification is "PATH_A" or "BOTH", include the 1-2 relevant tool categories:
+  * "MARKET": For market benchmarks, snapshots, averages, trends, KPIs.
+  * "ANOMALY": For spike alerts, rate deviations, price crashes, volatile listings.
+  * "PROPERTY": For specific listing details, comparisons, availability, price changes.
+  * "GEO": For addresses, neighborhoods, coordinates, nearby listings, distances.
+- For "PATH_B", "GREETING", "COMMERCIAL_HANDOFF", or "OUT_OF_SCOPE", set "tool_categories": [].
 """
 
 # ─── SYNTHESIS PROMPT — CORE (always included) ────────────────────────────────

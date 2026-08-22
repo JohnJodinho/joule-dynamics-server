@@ -44,7 +44,7 @@ from services.tool_executor import (
 )
 from services.tool_compressor import compress_tool_output
 from services.supabase_service import search_methodology_rag
-from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS, discover_tools, select_tools
+from services.tools import REAL_ESTATE_TOOLS, COMMERCIAL_TOOLS, SUGGEST_ACTIONS_TOOL, discover_tools, select_tools
 
 logger = setup_logger(__name__)
 
@@ -109,15 +109,12 @@ def _extract_json_from_text(text: str) -> dict:
     return {}
 
 
-async def classify_query(user_query: str) -> str:
+async def classify_query(user_query: str) -> tuple[str, list[str]]:
     """
-    Classify the user query into one of 6 route tags using a fast router model.
+    Classify the user query and extract tool categories for category gating.
 
-    NOTE: response_format={"type": "json_object"} is intentionally NOT used.
-    Qwen thinking models (qwen/qwen3.6-27b) reject JSON mode with a 400
-    json_validate_failed error. We ask for JSON via the prompt instead and
-    extract it with _extract_json_from_text() which handles <think> blocks
-    and falls back to regex extraction.
+    Returns:
+      (classification, tool_categories) e.g. ("PATH_A", ["MARKET", "ANOMALY"])
     """
     messages = [
         {"role": "system", "content": ROUTER_PROMPT},
@@ -128,13 +125,17 @@ async def classify_query(user_query: str) -> str:
             res = await groq_call(
                 model=model,
                 messages=messages,
-                max_tokens=500,   # Allow thinking models to finish <think> block
+                max_tokens=600,
                 temperature=0.0,
-                # No response_format - unsupported by Qwen thinking models
             )
             raw = res.choices[0].message.content or "{}"
             data = _extract_json_from_text(raw)
             classification = data.get("classification", "")
+            tool_categories = data.get("tool_categories", [])
+            if isinstance(tool_categories, str):
+                tool_categories = [tool_categories]
+            elif not isinstance(tool_categories, list):
+                tool_categories = []
 
             if classification not in _VALID_CLASSIFICATIONS:
                 logger.warning(
@@ -143,9 +144,9 @@ async def classify_query(user_query: str) -> str:
                 classification = "PATH_A"
 
             logger.info(
-                f"[router] {model} -> {classification}: {data.get('reason', '')}"
+                f"[router] {model} -> {classification} (categories={tool_categories}): {data.get('reason', '')}"
             )
-            return classification
+            return classification, tool_categories
 
         except Exception as exc:
             if is_structural_error(exc):
@@ -153,7 +154,7 @@ async def classify_query(user_query: str) -> str:
             else:
                 logger.warning(f"[router] {model} failed, trying fallback: {exc}")
 
-    return "PATH_A"  # Safe default
+    return "PATH_A", []  # Safe default
 
 
 # ─── AGENTIC TOOL LOOP ────────────────────────────────────────────────────────
@@ -514,8 +515,8 @@ async def process_chat_message(
     with propagate_attributes(session_id=session_id, tags=["real-estate-chat"]):
         get_client().update_current_span(input=user_query)
 
-        # STEP 1: Route
-        classification = await classify_query(user_query)
+        # STEP 1: Route & Category Gating
+        classification, tool_categories = await classify_query(user_query)
 
         if classification == "OUT_OF_SCOPE":
             get_client().update_current_span(output=_REPLY_OUT_OF_SCOPE)
@@ -561,10 +562,13 @@ async def process_chat_message(
         # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = discover_tools(user_query)
-            logger.info(f"[process_chat] discovered {len(active_tools)} tools for classification={classification}")
+            active_tools = discover_tools(user_query, categories=tool_categories, top_k=4)
+            logger.info(f"[process_chat] discovered {len(active_tools)} tools for classification={classification} categories={tool_categories}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
+        elif classification == "PATH_B":
+            # Universal tool support: allow PATH_B to suggest actions/clarifications natively
+            active_tools = [SUGGEST_ACTIONS_TOOL]
 
         # STEP 5: Run agentic loop
         tool_results: list[dict] = []
@@ -614,8 +618,8 @@ async def stream_chat_message(
     with propagate_attributes(
         session_id=session_id, tags=["real-estate-chat", "stream"]
     ):
-        # STEP 1: Route
-        classification = await classify_query(user_query)
+        # STEP 1: Route & Category Gating
+        classification, tool_categories = await classify_query(user_query)
         yield {"type": "status", "classification": classification}
 
         if classification == "OUT_OF_SCOPE":
@@ -662,10 +666,13 @@ async def stream_chat_message(
         # STEP 4: Dynamic Tool Discovery (Semantic Embedding + Category Gating)
         active_tools = None
         if classification in ("PATH_A", "BOTH"):
-            active_tools = discover_tools(user_query)
-            logger.info(f"[stream_chat] discovered {len(active_tools)} tools for classification={classification}")
+            active_tools = discover_tools(user_query, categories=tool_categories, top_k=4)
+            logger.info(f"[stream_chat] discovered {len(active_tools)} tools for classification={classification} categories={tool_categories}")
         elif classification == "COMMERCIAL_HANDOFF":
             active_tools = COMMERCIAL_TOOLS
+        elif classification == "PATH_B":
+            # Universal tool support: allow PATH_B to suggest actions/clarifications natively
+            active_tools = [SUGGEST_ACTIONS_TOOL]
 
         # STEP 5: Streaming agentic loop
         tool_results: list[dict] = []
