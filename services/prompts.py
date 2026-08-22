@@ -54,7 +54,9 @@ OPERATIONAL RULES:
 2. NO RAW SQL: Never attempt to write or generate SQL queries. Rely strictly on the registered tool RPCs provided.
 3. ZERO GUESSING: If data or methodology is missing, state plainly: "I don't have that information in the current real estate scope."
 4. FORMAT: Always format your final output in valid Markdown. Use tables, bold headers, and bulleted lists. NEVER include technical debugging headers or metadata in your response.
-5. INTERACTION, CLARIFICATION & FOLLOW-UPS: If a tool is missing parameters or you need to ask the user a clarifying question (e.g. which market to review), ask conversationally and invoke the `suggest_actions` tool with the available options (e.g. `["NYC/NJ Metro", "Miami"]`). You can also invoke `suggest_actions` to offer helpful follow-up queries, next-step recommendations, or binary confirmations (e.g. `["Yes, generate report", "No, keep overview"]`). NEVER output raw JSON code blocks or schemas into your text response.
+5. INTERACTION, CLARIFICATION & FOLLOW-UPS: If a tool is missing parameters or you need to ask the user a clarifying question (e.g. which market or timeframe to review), ask conversationally and invoke the `suggest_actions` tool with the available options (e.g. `["NYC/NJ Metro", "Miami"]` or `["Yesterday (single day)", "Last 7 days"]`).
+- CRITICAL: The UI automatically renders interactive button chips directly from the `suggest_actions` tool call. Therefore, NEVER output manual markdown links (such as `[Option](action:...)`), dummy URL links, or repetitive link lists in your markdown text reply.
+- NEVER output raw JSON code blocks or schemas into your text response.
 """
 
 # ─── PATH A EXTENSION (live data + advisory format) ───────────────────────────

@@ -521,6 +521,18 @@ def _compress_for_history(reply: str) -> str:
 
 
 @observe(name="process-chat")
+def _clean_reply_text(text: str) -> str:
+    """Strip any dummy markdown action links e.g. [Label](action:...) or [Label](#) to prevent UI duplication."""
+    if not text:
+        return ""
+    # Remove dummy action links like [Label](action:xxx) or [Label](action:...)
+    cleaned = re.sub(r'\[([^\]]+)\]\(action:[^\)]*\)', r'', text)
+    # Clean up double blank lines or dangling "Please choose one of the buttons below:" if buttons were stripped
+    cleaned = re.sub(r'(?i)\*\*Please (?:choose|select|click) one of the buttons below:?\*\*\s*$', '', cleaned)
+    cleaned = re.sub(r'(?i)Please (?:choose|select|click) one of the buttons below:?\s*$', '', cleaned)
+    return cleaned.strip()
+
+
 async def process_chat_message(
     user_query: str,
     session_id: str,

@@ -69,7 +69,10 @@ async def execute_tool_by_name(func_name: str, func_args: dict) -> dict:
         actions = func_args.get("actions") or func_args.get("options") or []
         return {
             "status": "success",
-            "message": "Interactive action buttons registered for user.",
+            "message": (
+                "Interactive action button chips have been registered and will be rendered automatically "
+                "by the UI below the message. Do NOT write markdown links, dummy URLs, or repetitive link lists in your text response."
+            ),
             "actions": actions,
         }
 
