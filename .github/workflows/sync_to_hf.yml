@@ -1,0 +1,32 @@
+name: Sync to Hugging Face Space
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Swap README for Hugging Face
+        run: |
+          if [ -f README_HF.md ]; then
+            cp README_HF.md README.md
+          fi
+
+      - name: Push to Hugging Face
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff-index --quiet HEAD || git commit -m "chore: format README for Hugging Face [skip ci]"
+          git push -f https://JohnAlbarkaIbrahim:$HF_TOKEN@huggingface.co/spaces/JohnAlbarkaIbrahim/SentimentScope main

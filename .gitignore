@@ -75,3 +75,4 @@ test_api.py
 misc
 test_langfuse.py
 additional_tools.py
+docs
