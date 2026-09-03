@@ -160,54 +160,95 @@ async def classify_query(user_query: str) -> tuple[str, list[str]]:
 # ─── AGENTIC TOOL LOOP ────────────────────────────────────────────────────────
 
 
+
+# ─── TURN 3: DYNAMIC ACTION RESOLUTION (Strictly Forced Tool Call) ──────────────
+
+ACTION_RESOLVER_PROMPT = """You are an interactive action generator for Joule Dynamics Real Estate Intelligence.
+Given the user's query and the assistant's final response, determine 0 to 4 short, highly relevant follow-up actions or clarifying choices for the user.
+Guidelines:
+- If the assistant asked a clarifying question (e.g. which market or date), provide those exact choices (e.g. ["Miami", "NYC/NJ Metro"]).
+- If the assistant provided market/price analysis, suggest logical next-step actions (e.g. ["Compare with Miami", "See Rate Volatility", "Generate Download Report"]).
+- If the conversation is complete, a simple greeting, or no follow-up is genuinely useful, return an empty array actions: [].
+- You must return ONLY via the suggest_actions tool call. Do not force suggestions if none are genuinely helpful."""
+
+
+async def resolve_suggested_actions(user_query: str, assistant_reply: str) -> list[str]:
+    """
+    Turn 3: Decoupled Action Resolution.
+    Invokes the model with forced tool_choice on suggest_actions.
+    Because tool_choice is forced and no text is generated, this CANNOT leak tool syntax into markdown.
+    """
+    if not assistant_reply or len(assistant_reply.strip()) < 10:
+        return []
+
+    messages = [
+        {"role": "system", "content": ACTION_RESOLVER_PROMPT},
+        {"role": "user", "content": user_query},
+        {"role": "assistant", "content": assistant_reply},
+    ]
+
+    for model in [GROQ_ROUTE_MODEL, GROQ_SYNTHESIS_MODEL]:
+        try:
+            res = await groq_call(
+                model=model,
+                messages=messages,
+                tools=[SUGGEST_ACTIONS_TOOL],
+                tool_choice={"type": "function", "function": {"name": "suggest_actions"}},
+                max_tokens=250,
+                temperature=0.0,
+            )
+            msg = res.choices[0].message
+            if getattr(msg, "tool_calls", None):
+                tc = msg.tool_calls[0]
+                args = parse_tool_args(tc.function.arguments)
+                actions = args.get("actions") or args.get("options") or []
+                if isinstance(actions, list):
+                    return [str(a).strip() for a in actions if str(a).strip()][:4]
+            return []
+        except Exception as exc:
+            logger.warning(f"[resolve_actions] error on {model}: {exc}")
+
+    return []
+
+
 async def run_agent_loop(
     messages: list[dict],
     active_tools: list | None,
     tool_results: list,
+    user_query: str = "",
     suggested_actions_out: list | None = None,
 ) -> str | None:
     """
-    Core agentic loop.
-
-    Keeps discovered tools available across all rounds until finish_reason='stop'.
-    Provides generous max_tokens=2500 so reasoning models never hit finish_reason='length'.
-    Recovers from Groq 400 failed_generation seamlessly.
-    Returns the final markdown reply text.
+    3-Turn Agentic State Machine (Non-streaming):
+      Turn 1: Data Retrieval loop (up to MAX_TOOL_ROUNDS=4 consecutive data tool calls).
+      Turn 2: Markdown Synthesis with tools=None (structurally immune to tool-call leakage).
+      Turn 3: Action Resolution via resolve_suggested_actions() with forced tool_choice.
     """
+    # ── Turn 1: Multi-round data tool retrieval (up to 4 consecutive tool calls) ─
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
-        response_message = None
+        if not active_tools:
+            break
 
-        # ── Brain call (primary + fallback) ───────────────────────────────────
+        response_message = None
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=active_tools if active_tools else None,
-                    tool_choice="auto" if active_tools else "none",
+                    tools=active_tools,
+                    tool_choice="auto",
                     max_tokens=2500,
                     temperature=0.2,
                 )
                 response_message = brain_res.choices[0].message
-                logger.info(
-                    f"[agent_loop] round={round_num} model={model} "
-                    f"finish_reason={brain_res.choices[0].finish_reason}"
-                )
                 break
-
             except Exception as exc:
                 failed_gen = extract_failed_generation(exc)
                 if failed_gen and is_structural_error(exc):
                     fn, fn_args = parse_failed_generation(failed_gen)
                     if fn and isinstance(fn_args, dict):
-                        logger.info(
-                            f"[agent_loop] recovering tool={fn} from failed_generation"
-                        )
                         tool_result = await execute_tool_by_name(fn, fn_args)
                         tool_results.append({"tool": fn, "args": fn_args})
-                        if fn == "suggest_actions" and suggested_actions_out is not None:
-                            actions = fn_args.get("actions") or fn_args.get("options") or []
-                            suggested_actions_out.extend(actions)
                         messages.append(
                             {
                                 "tool_call_id": f"recov_{int(time.time())}",
@@ -222,27 +263,15 @@ async def run_agent_loop(
         if response_message is None:
             continue
 
-        finish_reason = ""
-        if hasattr(response_message, "tool_calls") and response_message.tool_calls:
-            finish_reason = "tool_calls"
-        elif hasattr(response_message, "content") and response_message.content:
-            finish_reason = "stop"
-
-        # ── Tool call round ───────────────────────────────────────────────────
-        if finish_reason == "tool_calls":
+        has_tool_calls = bool(getattr(response_message, "tool_calls", None))
+        if has_tool_calls:
             messages.append(normalize_assistant_message(response_message))
             for tc in response_message.tool_calls:
                 fn = tc.function.name
                 args = parse_tool_args(tc.function.arguments)
                 logger.info(f"[agent_loop] executing tool={fn} args={args}")
-
                 result = await execute_tool_by_name(fn, args)
                 tool_results.append({"tool": fn, "args": args})
-
-                if fn == "suggest_actions" and suggested_actions_out is not None:
-                    actions = args.get("actions") or args.get("options") or []
-                    suggested_actions_out.extend(actions)
-
                 messages.append(
                     {
                         "tool_call_id": tc.id,
@@ -251,92 +280,69 @@ async def run_agent_loop(
                         "content": compress_tool_output(fn, result),
                     }
                 )
-            # Continue loop — model may want more tools or synthesis next round
+            # Continue data loop — model may request another consecutive tool call
+        else:
+            # Model decided it has gathered all necessary data
+            break
 
-        # ── Direct text reply — done ──────────────────────────────────────────
-        elif finish_reason == "stop":
-            return response_message.content
-
-    # Loop exhausted without finish_reason=stop → force synthesis
-    logger.warning("[agent_loop] max rounds reached, forcing synthesis")
+    # ── Turn 2: Markdown Synthesis (tools=None guarantees pure markdown) ────────
+    reply_text = ""
     for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
         try:
-            synth_messages = list(messages) + [
-                {
-                    "role": "system",
-                    "content": (
-                        "Synthesize all the real estate data gathered above into a clear, helpful Markdown reply. "
-                        "If the user requested multi-step actions or further inquiries that could not be fully completed "
-                        "within this turn (such as generating a downloadable export report, comparing specific listings, deep dive into volatility, or geocoding proximity), "
-                        "synthesize the findings obtained so far and invoke the `suggest_actions` tool with proactive next-step choices "
-                        "(e.g. ['Generate Download Report', 'Compare Listings', 'Check Volatility']) so the user can easily continue the workflow in the next message."
-                    ),
-                }
-            ]
-            final_res = await groq_call(
+            synth_res = await groq_call(
                 model=model,
-                messages=synth_messages,
-                tools=[SUGGEST_ACTIONS_TOOL],
-                tool_choice="auto",
+                messages=messages,
+                tools=None,
+                tool_choice="none",
                 max_tokens=2500,
                 temperature=0.2,
             )
-            msg = final_res.choices[0].message
-            if getattr(msg, "tool_calls", None):
-                for tc in msg.tool_calls:
-                    if tc.function.name == "suggest_actions" and suggested_actions_out is not None:
-                        fn_args = parse_tool_args(tc.function.arguments)
-                        actions = fn_args.get("actions") or fn_args.get("options") or []
-                        suggested_actions_out.extend(actions)
-            return final_res.choices[0].message.content
+            reply_text = synth_res.choices[0].message.content or ""
+            break
         except Exception as exc:
-            failed_gen = extract_failed_generation(exc)
-            fn, fn_args = parse_failed_generation(failed_gen)
-            if fn == "generate_data_export" and isinstance(fn_args, dict):
-                from services.appwrite_service import upload_document_to_appwrite
+            logger.warning(f"[agent_loop] synthesis failed on {model}: {exc}")
 
-                content = fn_args.get("content", "")
-                upload_res = await upload_document_to_appwrite(content, "md")
-                dl_url = upload_res.get("download_url", "")
-                if dl_url:
-                    return f"{content}\n\n[Download Markdown Report]({dl_url})"
-                return content
-            logger.warning(f"[agent_loop] forced synthesis failed on {model}: {exc}")
+    if not reply_text:
+        reply_text = _REPLY_FALLBACK
 
-    return None
+    # ── Turn 3: Action Resolution (Forced suggest_actions call) ─────────────────
+    if suggested_actions_out is not None:
+        actions = await resolve_suggested_actions(user_query, reply_text)
+        suggested_actions_out.extend(actions)
+
+    return reply_text
 
 
 # ─── STREAMING AGENT LOOP (for SSE) ───────────────────────────────────────────
-
 
 async def run_agent_loop_streaming(
     messages: list[dict],
     active_tools: list | None,
     tool_results: list,
+    user_query: str = "",
     suggested_actions_out: list | None = None,
 ) -> AsyncIterator[dict]:
     """
-    Streaming version of run_agent_loop for SSE delivery.
-
-    Yields dicts:
-      {"type": "tool_call", "tool": str, "args": dict}
-      {"type": "token",     "token": str}
-      {"type": "done",      "tools_called": list, "suggested_actions": list}
+    3-Turn Agentic State Machine (Streaming SSE):
+      Turn 1: Data Retrieval loop (up to MAX_TOOL_ROUNDS=4 consecutive data tool calls).
+      Turn 2: Live Markdown Synthesis with tools=None (streams tokens live, zero leaked syntax).
+      Turn 3: Action Resolution via resolve_suggested_actions() emitted in event: done.
     """
     loop = asyncio.get_event_loop()
-    suggested_actions = suggested_actions_out if suggested_actions_out is not None else []
 
-    # Run all tool rounds (non-streaming, same as normal loop)
+    # ── Turn 1: Multi-round data tool retrieval (up to 4 consecutive tool calls) ─
     for round_num in range(1, MAX_TOOL_ROUNDS + 1):
-        response_message = None
+        if not active_tools:
+            break
 
+        response_message = None
         for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
             try:
                 brain_res = await groq_call(
                     model=model,
                     messages=messages,
-                    tools=active_tools if active_tools else None,
-                    tool_choice="auto" if active_tools else "none",
+                    tools=active_tools,
+                    tool_choice="auto",
                     max_tokens=2500,
                     temperature=0.2,
                 )
@@ -349,9 +355,6 @@ async def run_agent_loop_streaming(
                     if fn and isinstance(fn_args, dict):
                         tool_result = await execute_tool_by_name(fn, fn_args)
                         tool_results.append({"tool": fn, "args": fn_args})
-                        if fn == "suggest_actions":
-                            actions = fn_args.get("actions") or fn_args.get("options") or []
-                            suggested_actions.extend(actions)
                         messages.append(
                             {
                                 "tool_call_id": f"recov_{int(time.time())}",
@@ -376,11 +379,6 @@ async def run_agent_loop_streaming(
                 yield {"type": "tool_call", "tool": fn, "args": args}
                 result = await execute_tool_by_name(fn, args)
                 tool_results.append({"tool": fn, "args": args})
-
-                if fn == "suggest_actions":
-                    actions = args.get("actions") or args.get("options") or []
-                    suggested_actions.extend(actions)
-
                 messages.append(
                     {
                         "tool_call_id": tc.id,
@@ -389,48 +387,25 @@ async def run_agent_loop_streaming(
                         "content": compress_tool_output(fn, result),
                     }
                 )
+            # Continue data loop — model may request another consecutive tool call
         else:
-            # Model returned a direct text reply — strip any clarification code fence if present
-            content = response_message.content or ""
-            clean_content, extracted_actions = extract_clarification_options(content)
-            if extracted_actions:
-                suggested_actions.extend(extracted_actions)
+            # Model finished calling data tools
+            break
 
-            if clean_content:
-                for token in _split_tokens(clean_content):
-                    yield {"type": "token", "token": token}
-            yield {
-                "type": "done",
-                "tools_called": tool_results,
-                "suggested_actions": list(dict.fromkeys(suggested_actions)),
-            }
-            return
+    # ── Turn 2: Live Markdown Synthesis with tools=None (Zero tool leakage!) ────
+    full_reply_text = ""
+    from services.groq_client import groq_client as _gc
 
-    # Forced synthesis with streaming
+    synthesis_succeeded = False
     for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
         try:
-            synth_messages = list(messages) + [
-                {
-                    "role": "system",
-                    "content": (
-                        "Synthesize all the real estate data gathered above into a clear, helpful Markdown reply. "
-                        "If the user requested multi-step actions or further inquiries that could not be fully completed "
-                        "within this turn (such as generating a downloadable export report, comparing specific listings, deep dive into volatility, or geocoding proximity), "
-                        "synthesize the findings obtained so far and invoke the `suggest_actions` tool with proactive next-step choices "
-                        "(e.g. ['Generate Download Report', 'Compare Listings', 'Check Volatility']) so the user can easily continue the workflow in the next message."
-                    ),
-                }
-            ]
-
-            from services.groq_client import groq_client as _gc
-
             stream = await loop.run_in_executor(
                 None,
-                lambda: _gc.chat.completions.create(
-                    model=model,
-                    messages=synth_messages,
-                    tools=[SUGGEST_ACTIONS_TOOL],
-                    tool_choice="auto",
+                lambda m=model: _gc.chat.completions.create(
+                    model=m,
+                    messages=messages,
+                    tools=None,
+                    tool_choice="none",
                     temperature=0.2,
                     max_tokens=2500,
                     stream=True,
@@ -439,21 +414,26 @@ async def run_agent_loop_streaming(
             for chunk in stream:
                 delta = chunk.choices[0].delta.content or ""
                 if delta:
+                    full_reply_text += delta
                     yield {"type": "token", "token": delta}
-            yield {
-                "type": "done",
-                "tools_called": tool_results,
-                "suggested_actions": list(dict.fromkeys(suggested_actions)),
-            }
-            return
+            synthesis_succeeded = True
+            break
         except Exception as exc:
-            logger.warning(f"[stream_loop] forced synthesis failed on {model}: {exc}")
+            logger.warning(f"[stream_loop] synthesis failed on {model}: {exc}")
 
-    yield {"type": "token", "token": _REPLY_FALLBACK}
+    if not synthesis_succeeded:
+        full_reply_text = _REPLY_FALLBACK
+        yield {"type": "token", "token": _REPLY_FALLBACK}
+
+    # ── Turn 3: Action Resolution (Forced suggest_actions call) ─────────────────
+    suggested_actions = await resolve_suggested_actions(user_query, full_reply_text)
+    if suggested_actions_out is not None:
+        suggested_actions_out.extend(suggested_actions)
+
     yield {
         "type": "done",
         "tools_called": tool_results,
-        "suggested_actions": list(dict.fromkeys(suggested_actions)),
+        "suggested_actions": suggested_actions,
     }
 
 

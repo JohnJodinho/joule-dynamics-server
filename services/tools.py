@@ -17,11 +17,8 @@ SUGGEST_ACTIONS_TOOL = {
     "function": {
         "name": "suggest_actions",
         "description": (
-            "Provide clickable interactive buttons/chips to the user in the UI. Use this to: "
-            "1. Ask for missing parameters or clarifications (e.g. ['NYC/NJ Metro', 'Miami']). "
-            "2. Offer next-step follow-up queries or carried-over workflows after answering (e.g. ['Generate Download Report', 'Compare with NYC', 'Check Volatility']). "
-            "3. Present binary confirmation choices when asking if user wants deeper analysis (e.g. ['Yes, generate report', 'No, this is enough']). "
-            "4. Guide users through multi-step conversational workflows."
+            "Suggest 0 to 4 relevant interactive action buttons or clarifying options for the user based on the conversation. "
+            "Return an empty array actions: [] if no follow-up action is genuinely useful or if the conversation has concluded naturally — do not force suggestions."
         ),
         "parameters": {
             "type": "object",
@@ -29,7 +26,7 @@ SUGGEST_ACTIONS_TOOL = {
                 "actions": {
                     "type": "array",
                     "items": {"type": "string"},
-                    "description": "List of 2 to 4 short, action-oriented button labels (max 35 chars each)."
+                    "description": "List of 0 to 4 short, action-oriented button labels (max 35 chars each). Empty list [] if no follow-up is needed."
                 }
             },
             "required": ["actions"]
@@ -494,7 +491,6 @@ REAL_ESTATE_TOOLS = [
         },
     },
     GENERATE_DATA_EXPORT_TOOL,
-    SUGGEST_ACTIONS_TOOL,
 ]
 
 COMMERCIAL_TOOLS = [
@@ -692,9 +688,8 @@ def discover_tools(
         results.append(GENERATE_DATA_EXPORT_TOOL)
         seen_names.add("generate_data_export")
 
-    if "suggest_actions" not in seen_names:
-        results.append(SUGGEST_ACTIONS_TOOL)
-        seen_names.add("suggest_actions")
+    # SUGGEST_ACTIONS_TOOL is intentionally decoupled from data retrieval turns.
+    # It is executed exclusively in Turn 3 (Action Resolution) with tools=None during synthesis.
 
     return results
 
