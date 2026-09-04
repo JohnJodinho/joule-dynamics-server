@@ -50,6 +50,94 @@ logger = setup_logger(__name__)
 
 MAX_TOOL_ROUNDS = 4  # Maximum tool-call rounds before forcing synthesis
 
+# ─── UNIVERSAL STREAM STRIPPER ────────────────────────────────────────────────
+# Suppresses internal model tokens (<think>, <tool_call>, <|constrain|>) from
+# reaching the SSE text stream. Operates as a stateful generator filter.
+
+def _strip_internal_tokens(delta_iter):
+    """
+    Generator filter that consumes raw delta strings and yields only clean
+    user-facing text, suppressing:
+      - <think>...</think>  (Qwen reasoning blocks)
+      - <tool_call>...</tool_call>  (Qwen XML tool attempts)
+      - <|constrain|>...<|message|>...  (GPT-OSS internal delimiters)
+    """
+    buf = ""
+    suppressing = False  # True when inside a block we need to discard
+    suppress_end = ""    # The closing tag we're waiting for
+
+    for delta in delta_iter:
+        buf += delta
+
+        while buf:
+            if not suppressing:
+                # Check for any suppression start marker
+                for start_tag, end_tag in [
+                    ("<think>", "</think>"),
+                    ("<tool_call>", "</tool_call>"),
+                    ("<|constrain|>", None),  # suppress everything from here to end
+                ]:
+                    idx = buf.find(start_tag)
+                    if idx != -1:
+                        # Yield everything before the tag
+                        before = buf[:idx]
+                        if before:
+                            yield before
+                        buf = buf[idx + len(start_tag):]
+                        suppressing = True
+                        suppress_end = end_tag
+                        break
+                else:
+                    # No suppression marker found.
+                    # Hold back partial tag matches at the tail (e.g. "<thi" could become "<think>")
+                    # Only need to worry about '<' at the end
+                    last_lt = buf.rfind("<")
+                    if last_lt != -1 and last_lt > len(buf) - 15:
+                        # Could be a partial tag — hold it
+                        yield buf[:last_lt]
+                        buf = buf[last_lt:]
+                        break
+                    else:
+                        yield buf
+                        buf = ""
+            else:
+                # We are suppressing — look for the end tag
+                if suppress_end is None:
+                    # <|constrain|> — suppress everything to end of stream
+                    buf = ""
+                    break
+                end_idx = buf.find(suppress_end)
+                if end_idx != -1:
+                    # Skip past the closing tag
+                    buf = buf[end_idx + len(suppress_end):]
+                    # Strip leading whitespace/newlines after closing tag
+                    buf = buf.lstrip("\n\r ")
+                    suppressing = False
+                else:
+                    # Haven't found end tag yet — discard buffer, wait for more
+                    buf = ""
+                    break
+
+    # Flush remaining buffer if not suppressing
+    if buf and not suppressing:
+        yield buf
+
+
+
+
+# Synthesis directive appended to Turn 2 messages — prevents models from
+# attempting manual tool re-invocations when tools=None
+_SYNTHESIS_DIRECTIVE = {
+    "role": "system",
+    "content": (
+        "You are now delivering your final response directly to the user in clear Markdown. "
+        "Synthesize all real estate data gathered above into a helpful analysis. "
+        "If any required parameters (dates, market name) were missing or a tool returned an error, "
+        "politely ask the user for clarification in your prose — do NOT output XML tags, tool calls, "
+        "code blocks, or pseudo-function syntax of any kind. Respond only in natural language Markdown."
+    ),
+}
+
 # ─── STATIC RESPONSES ─────────────────────────────────────────────────────────
 
 _REPLY_OUT_OF_SCOPE = (
@@ -286,18 +374,24 @@ async def run_agent_loop(
             break
 
     # ── Turn 2: Markdown Synthesis (tools=None guarantees pure markdown) ────────
+    synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
     reply_text = ""
-    for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
+    for model in [GROQ_ROUTE_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
         try:
             synth_res = await groq_call(
                 model=model,
-                messages=messages,
+                messages=synth_messages,
                 tools=None,
                 tool_choice="none",
                 max_tokens=2500,
                 temperature=0.2,
             )
-            reply_text = synth_res.choices[0].message.content or ""
+            raw = synth_res.choices[0].message.content or ""
+            # Strip any residual <think> or <tool_call> blocks from non-streaming
+            raw = re.sub(r"<think>.*?</think>", "", raw, flags=re.DOTALL).strip()
+            raw = re.sub(r"<tool_call>.*?</tool_call>", "", raw, flags=re.DOTALL).strip()
+            raw = re.sub(r"<\|constrain\|>.*", "", raw, flags=re.DOTALL).strip()
+            reply_text = raw
             break
         except Exception as exc:
             logger.warning(f"[agent_loop] synthesis failed on {model}: {exc}")
@@ -393,17 +487,18 @@ async def run_agent_loop_streaming(
             break
 
     # ── Turn 2: Live Markdown Synthesis with tools=None (Zero tool leakage!) ────
+    synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
     full_reply_text = ""
     from services.groq_client import groq_client as _gc
 
     synthesis_succeeded = False
-    for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL]:
+    for model in [GROQ_ROUTE_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
         try:
             stream = await loop.run_in_executor(
                 None,
                 lambda m=model: _gc.chat.completions.create(
                     model=m,
-                    messages=messages,
+                    messages=synth_messages,
                     tools=None,
                     tool_choice="none",
                     temperature=0.2,
@@ -411,11 +506,19 @@ async def run_agent_loop_streaming(
                     stream=True,
                 ),
             )
-            for chunk in stream:
-                delta = chunk.choices[0].delta.content or ""
-                if delta:
-                    full_reply_text += delta
-                    yield {"type": "token", "token": delta}
+
+            # Raw delta generator from the stream
+            def _raw_deltas():
+                for chunk in stream:
+                    delta = chunk.choices[0].delta.content or ""
+                    if delta:
+                        yield delta
+
+            # Pass through universal stripper before yielding to SSE
+            for clean_token in _strip_internal_tokens(_raw_deltas()):
+                if clean_token:
+                    full_reply_text += clean_token
+                    yield {"type": "token", "token": clean_token}
             synthesis_succeeded = True
             break
         except Exception as exc:
