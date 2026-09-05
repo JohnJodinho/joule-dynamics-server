@@ -21,7 +21,7 @@ client.set_key(APP_WRITE_API_KEY)
 
 storage = Storage(client)
 
-async def upload_document_to_appwrite(content: str, format: str) -> str:
+async def upload_document_to_appwrite(content: str, format: str) -> dict:
     """
     Uploads a generated document to Appwrite storage and returns a view/download URL.
     """

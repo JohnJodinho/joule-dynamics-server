@@ -37,6 +37,14 @@ app.add_middleware(
 import unified_ingest
 unified_ingest.ensure_ingested()
 
+# ── Startup: initialize live market registry ──────────────────────────────────
+# Fetches the authoritative market list from Supabase once at boot.
+# All downstream consumers (prompts, tools, agent_loop) read from this cache.
+# Adding a new market (e.g. Dubai) is now a DB operation — no code change needed.
+from services.market_registry import market_registry
+market_registry.refresh()
+logger.info(f"Market registry initialized: {market_registry.get_markets()}")
+
 # ── Mount all versioned routers ───────────────────────────────────────────────
 from routes import v1_router
 app.include_router(v1_router)

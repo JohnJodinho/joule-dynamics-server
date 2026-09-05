@@ -151,7 +151,7 @@ _REPLY_GREETING = (
 )
 _REPLY_FALLBACK = (
     "I was unable to retrieve the data needed to answer your question. "
-    "Please try rephrasing, or ask about a specific market (Miami or NYC/NJ Metro)."
+    "Please try rephrasing, or ask 'What markets do you track?' to see all available options."
 )
 
 
@@ -254,8 +254,8 @@ async def classify_query(user_query: str) -> tuple[str, list[str]]:
 ACTION_RESOLVER_PROMPT = """You are an interactive action generator for Joule Dynamics Real Estate Intelligence.
 Given the user's query and the assistant's final response, determine 0 to 4 short, highly relevant follow-up actions or clarifying choices for the user.
 Guidelines:
-- If the assistant asked a clarifying question (e.g. which market or date), provide those exact choices (e.g. ["Miami", "NYC/NJ Metro"]).
-- If the assistant provided market/price analysis, suggest logical next-step actions (e.g. ["Compare with Miami", "See Rate Volatility", "Generate Download Report"]).
+- If the assistant asked a clarifying question (e.g. which market or date), provide those exact choices using the actual tracked market names available in the conversation context.
+- If the assistant provided market/price analysis, suggest logical next-step actions (e.g. ["Compare market averages", "See Rate Volatility", "Generate Download Report"]).
 - If the conversation is complete, a simple greeting, or no follow-up is genuinely useful, return an empty array actions: [].
 - You must return ONLY via the suggest_actions tool call. Do not force suggestions if none are genuinely helpful."""
 
@@ -769,8 +769,10 @@ async def stream_chat_message(
         if classification in ("PATH_B", "BOTH", "COMMERCIAL_HANDOFF"):
             rag_chunks = await search_methodology_rag(user_query)
 
-        # STEP 3: Messages
-        system_prompt = build_system_prompt(classification)
+        # STEP 3: Messages — build system prompt with live market list
+        from services.market_registry import market_registry
+        current_markets = market_registry.get_markets()
+        system_prompt = build_system_prompt(classification, markets=current_markets)
         messages: list[dict] = [{"role": "system", "content": system_prompt}]
         messages.extend(get_context_window(session_id))
         user_msg = f"User Context Filters: {json.dumps(session_context)}\nUser Query: {user_query}"

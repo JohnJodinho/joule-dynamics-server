@@ -216,12 +216,12 @@ async def handle_real_estate_chat_stream(payload: ChatRequest, request: Request)
 async def get_starter_prompts():
     return {
         "starters": [
-            "What's today's biggest rate spike?",
+            "What markets are you currently tracking?",
+            "Which properties have the biggest rate spike today?",
             "What does the 7-day trailing average mean?",
-            "Which Miami properties are unavailable right now?",
-            "Is NYC/NJ Metro trending up or down this week?",
-            "How often is listing data refreshed?",
-            "Show me the most volatile properties in Miami.",
+            "Show me the most volatile properties across all markets.",
+            "Are there any 25%+ price spikes this week?",
+            "What's the average nightly rate in Abuja right now?",
             "Compare the top 3 available Airbnb properties.",
         ]
     }

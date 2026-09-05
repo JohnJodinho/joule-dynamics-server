@@ -162,12 +162,16 @@ def geocode_address_handler(address: str) -> dict:
         return {"status": "error", "message": "No address was provided to geocode."}
 
     url = "https://api.mapbox.com/search/geocode/v6/forward"
-    params = {
+    params: dict = {
         "q": address.strip(),
         "access_token": MAPBOX_ACCESS_TOKEN,
-        "country": "US",
         "limit": 1,
     }
+    # Optional country restriction (configurable via GEOCODE_COUNTRY_FILTER env var).
+    # Left empty by default so all tracked markets (including Nigeria) are geocodable.
+    from config import GEOCODE_COUNTRY_FILTER
+    if GEOCODE_COUNTRY_FILTER:
+        params["country"] = GEOCODE_COUNTRY_FILTER
 
     try:
         response = requests.get(url, params=params, timeout=6)

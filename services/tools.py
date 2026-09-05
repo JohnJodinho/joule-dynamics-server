@@ -10,6 +10,23 @@ Implements Hierarchical Dynamic Tool Discovery / Schema Gating:
 from typing import List, Dict, Any, Optional
 import numpy as np
 
+
+def _market_desc() -> str:
+    """
+    Returns a live, formatted string of currently tracked market names.
+    Called inline within tool description strings so the LLM always sees the
+    current market list when tool schemas are built for a request.
+    Example output: "'Miami', 'NYC/NJ Metro', 'Abuja', 'Lagos'"
+    """
+    try:
+        from services.market_registry import market_registry
+        markets = market_registry.get_markets()
+        if markets:
+            return ", ".join(f"'{m}'" for m in markets)
+    except Exception:
+        pass
+    return "any tracked market (call get_tracked_markets for the live list)"
+
 # ── 1. UNIVERSAL TOOLS (Always attached to tool payloads) ──
 
 SUGGEST_ACTIONS_TOOL = {
@@ -84,7 +101,7 @@ REAL_ESTATE_TOOLS = [
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market region filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": f"Optional market region filter. Currently tracked: {_market_desc()}",
                     },
                     "p_platform": {
                         "type": "string",
@@ -126,7 +143,7 @@ REAL_ESTATE_TOOLS = [
                 "properties": {
                     "market_param": {
                         "type": "string",
-                        "description": "Market region name: 'Miami' or 'NYC/NJ Metro'",
+                        "description": f"Market region name. Currently tracked markets: {_market_desc()}",
                     }
                 },
                 "required": ["market_param"],
@@ -137,13 +154,13 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_snapshot",
-            "description": "Fetch a comprehensive single-day snapshot for a market (active property count, average nightly rate, min rate, max rate, availability rate %, and rate spike event count). Use when the user asks for a daily market overview, daily summary, market condition, or specific date performance in Miami or NYC.",
+            "description": f"Fetch a comprehensive single-day snapshot for a market (active property count, average nightly rate, min rate, max rate, availability rate %, and rate spike event count). Use when the user asks for a daily market overview, daily summary, market condition, or specific date performance in any tracked market.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Market region: 'Miami' or 'NYC/NJ Metro'",
+                        "description": f"Market region. Currently tracked markets: {_market_desc()}",
                     },
                     "p_start_date": {
                         "type": "string",
@@ -162,13 +179,13 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_market_trend",
-            "description": "Fetch historical daily average rate trends for a market over a specified number of days (up to 90 days). Use when the user asks how rates have changed over time, weekly/monthly trajectories, or market direction in Miami or NYC.",
+            "description": f"Fetch historical daily average rate trends for a market over a specified number of days (up to 90 days). Use when the user asks how rates have changed over time, weekly/monthly trajectories, or market direction in any tracked market.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Market region: 'Miami' or 'NYC/NJ Metro'",
+                        "description": f"Market region. Currently tracked markets: {_market_desc()}",
                     },
                     "p_days": {
                         "type": "integer",
@@ -207,7 +224,7 @@ REAL_ESTATE_TOOLS = [
                     },
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
                     },
                     "p_limit": {
                         "type": "integer",
@@ -258,7 +275,7 @@ REAL_ESTATE_TOOLS = [
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
                     },
                     "p_days": {
                         "type": "integer",
@@ -377,7 +394,7 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "search_properties",
-            "description": "Search and filter tracked properties by market ('Miami' or 'NYC/NJ Metro'), bedroom count, platform ('airbnb' or 'vrbo'), availability status, title substring, and ranked slices.",
+            "description": f"Search and filter tracked properties by market (any tracked region), bedroom count, platform ('airbnb' or 'vrbo'), availability status, title substring, and ranked slices. Currently tracked markets: {_market_desc()}",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -387,7 +404,7 @@ REAL_ESTATE_TOOLS = [
                     },
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
                     },
                     "p_platform": {
                         "type": "string",
@@ -428,13 +445,13 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_availability_rate",
-            "description": "Fetch availability percentage and booked vs available listing counts for a market or platform. Use when user asks about occupancy rates, calendar status, or vacancy in Miami or NYC.",
+            "description": f"Fetch availability percentage and booked vs available listing counts for a market or platform. Use when user asks about occupancy rates, calendar status, or vacancy in any tracked market.",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "p_market": {
                         "type": "string",
-                        "description": "Optional market filter ('Miami' or 'NYC/NJ Metro')",
+                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
                     },
                     "p_platform": {
                         "type": "string",
@@ -520,7 +537,7 @@ REAL_ESTATE_TOOLS = [
         "type": "function",
         "function": {
             "name": "get_tracked_markets",
-            "description": "Fetch a list of all active metropolitan real estate markets currently tracked by the system (Miami, NYC/NJ Metro) with property counts.",
+            "description": f"Fetch a list of all active metropolitan real estate markets currently tracked by the system, with property counts per market. Currently includes: {_market_desc()}.",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -571,25 +588,25 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
     {
         "name": "get_market_averages",
         "category": "MARKET",
-        "retrieval_description": "Average nightly rate and price baselines for Miami or NYC/NJ Metro over 7-day, 14-day, or 30-day periods, market benchmark pricing.",
+        "retrieval_description": "Average nightly rate and price baselines for any tracked market region over 7-day, 14-day, or 30-day periods, market benchmark pricing.",
         "schema": REAL_ESTATE_TOOLS[1],
     },
     {
         "name": "get_market_snapshot",
         "category": "MARKET",
-        "retrieval_description": "Daily overview snapshot of market performance, market condition in Miami or NYC, nightly rates range, minimum maximum rates, daily summary and availability.",
+        "retrieval_description": "Daily overview snapshot of market performance, market condition in any tracked city or region, nightly rates range, minimum maximum rates, daily summary and availability.",
         "schema": REAL_ESTATE_TOOLS[2],
     },
     {
         "name": "get_market_trend",
         "category": "MARKET",
-        "retrieval_description": "Historical pricing trend direction, rising or falling rates over time, week-over-week rate trajectory in Miami or NYC/NJ Metro.",
+        "retrieval_description": "Historical pricing trend direction, rising or falling rates over time, week-over-week rate trajectory in any tracked market region.",
         "schema": REAL_ESTATE_TOOLS[3],
     },
     {
         "name": "get_spike_alerts",
         "category": "ANOMALY",
-        "retrieval_description": "Sudden sharp price jumps, 25% plus rate increases, price spikes, surge pricing alerts, unseasonal rate surges in Miami or NYC, ranked slices.",
+        "retrieval_description": "Sudden sharp price jumps, 25% plus rate increases, price spikes, surge pricing alerts, unseasonal rate surges in any tracked market, ranked slices.",
         "schema": REAL_ESTATE_TOOLS[4],
     },
     {
@@ -631,13 +648,13 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
     {
         "name": "search_properties",
         "category": "PROPERTY",
-        "retrieval_description": "Find, list, and filter property listings by bedroom count, price range, market (Miami, NYC), availability status, listing name, or ranked slices.",
+        "retrieval_description": "Find, list, and filter property listings by bedroom count, price range, market region, availability status, listing name, or ranked slices.",
         "schema": REAL_ESTATE_TOOLS[11],
     },
     {
         "name": "get_availability_rate",
         "category": "PROPERTY",
-        "retrieval_description": "Percentage of units booked versus available, occupancy rates, reservation calendar status in Miami or NYC.",
+        "retrieval_description": "Percentage of units booked versus available, occupancy rates, reservation calendar status in any tracked market or city.",
         "schema": REAL_ESTATE_TOOLS[12],
     },
     {
@@ -661,7 +678,7 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
     {
         "name": "get_tracked_markets",
         "category": "MARKET",
-        "retrieval_description": "List all cities and regions currently supported and monitored in the database (NYC/NJ Metro, Miami).",
+        "retrieval_description": "List all cities and regions currently supported and monitored in the database, fetch the live market registry.",
         "schema": REAL_ESTATE_TOOLS[16],
     },
     {
@@ -755,6 +772,12 @@ def discover_tools(
         seen_names.add("generate_data_export")
 
     return results
+
+
+def invalidate_tool_embeddings() -> None:
+    """Public API to reset the tool embedding cache (e.g. called after market registry refresh)."""
+    global _TOOL_EMBEDDINGS
+    _TOOL_EMBEDDINGS = None
 
 
 # ── 5. BACKWARDS COMPATIBLE SELECTOR ──

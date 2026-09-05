@@ -63,7 +63,9 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
 
     # ── 3. get_market_snapshot ──
     elif func_name == "get_market_snapshot":
-        market = args.get("p_market") or args.get("market") or "Miami"
+        market = args.get("p_market") or args.get("market")
+        if not market:
+            return {"status": "error", "message": "p_market is required for get_market_snapshot. Call get_tracked_markets to see available markets."}
         start = args.get("p_start_date") or args.get("start_date")
         end = args.get("p_end_date") or args.get("end_date")
         if not start or not end:
@@ -85,7 +87,9 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
 
     # ── 4. get_market_trend ──
     elif func_name == "get_market_trend":
-        market = args.get("p_market") or args.get("market") or "Miami"
+        market = args.get("p_market") or args.get("market")
+        if not market:
+            return {"status": "error", "message": "p_market is required for get_market_trend. Call get_tracked_markets to see available markets."}
         days = _clamp(args.get("p_days") or args.get("days"), 7, 90, default=14)
         plat = args.get("p_platform") or args.get("platform")
         is_act = args.get("p_is_active") if "p_is_active" in args else True

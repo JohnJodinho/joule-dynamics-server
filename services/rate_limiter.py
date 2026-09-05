@@ -9,9 +9,27 @@ class SessionRateLimiter:
         self.requests = defaultdict(list)
         self.daily_counts = defaultdict(lambda: {"count": 0, "reset_at": 0})
 
+    def evict_stale(self, max_idle_seconds: int = 90_000) -> None:
+        """
+        Evict sessions that have been idle for longer than max_idle_seconds
+        (~25 hours) from both stores to prevent unbounded dict growth.
+        Called on every rate-limit check — O(n) but cheap for typical loads.
+        """
+        now = time.time()
+        cutoff = now - max_idle_seconds
+        stale_req = [sid for sid, times in self.requests.items() if not times or max(times) < cutoff]
+        stale_daily = [sid for sid, data in self.daily_counts.items() if data["reset_at"] < cutoff]
+        for sid in stale_req:
+            del self.requests[sid]
+        for sid in stale_daily:
+            del self.daily_counts[sid]
+
     def check_rate_limit(self, client_id: str):
         now = time.time()
-        
+
+        # Evict sessions idle for >25 hours to prevent unbounded memory growth
+        self.evict_stale()
+
         # Check 24-hour Daily Limit
         daily = self.daily_counts[client_id]
         if now > daily["reset_at"]:

@@ -132,7 +132,7 @@ def ensure_ingested():
         try:
             with open("section_titles.json", "r", encoding="utf-8") as f:
                 saved_titles = json.load(f)
-            if saved_titles != section_titles or stats["added"] > 0 or stats["deleted"] > 0:
+            if saved_titles != section_titles or stats["added"] > 0 or stats["deleted"] > 0 or stats["updated"] > 0:
                 regenerate_titles = True
         except Exception:
             regenerate_titles = True

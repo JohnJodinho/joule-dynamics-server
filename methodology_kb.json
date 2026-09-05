@@ -1,7 +1,7 @@
 [
   {
     "section_title": "Overview & Purpose of the Real Estate Dashboard",
-    "chunk_content": "The Joule Dynamics Real Estate Intelligence Dashboard is a live market intelligence interface designed for short-term rental property managers, investors, and hosts. It provides real-time pricing intelligence, rate change monitoring, historical trailing average benchmarks, and volatility tracking across competitive rental properties in major markets like Miami and the NYC/NJ Metro area."
+    "chunk_content": "The Joule Dynamics Real Estate Intelligence Dashboard is a live market intelligence interface designed for short-term rental property managers, investors, and hosts. It provides real-time pricing intelligence, rate change monitoring, historical trailing average benchmarks, and volatility tracking across competitive rental properties in multiple global markets. Currently tracked markets include Miami, NYC/NJ Metro, Abuja, and Lagos, with the platform designed to scale to any new market without application code changes."
   },
   {
     "section_title": "Top KPI Metric Cards",
@@ -9,7 +9,7 @@
   },
   {
     "section_title": "Global Filters & Control Bar",
-    "chunk_content": "The Global Control Bar sits above the dashboard components and allows users to slice and filter all dashboard data simultaneously:\n- Properties: A searchable multi-select checkbox dropdown to isolate one or more specific listings.\n- Market: Filter by geographic market ('Miami' or 'NYC/NJ Metro').\n- Platform: Filter by booking platform ('Airbnb' for live daily tracking, 'Vrbo' for historical data).\n- Bedrooms: Filter by property size (e.g. 1 bedroom, 2 bedrooms, etc.).\n- Status (Currently Tracked vs Untracked): 'Currently Tracked' shows actively monitored listings (is_active = true); 'Untracked' shows archived/unmonitored listings; 'All Historical' displays everything.\n- Stay Dates (Date Range Picker): Filters the data based on the stay check-in date being priced, which automatically triggers dynamic Temporal UX States across the dashboard."
+    "chunk_content": "The Global Control Bar sits above the dashboard components and allows users to slice and filter all dashboard data simultaneously:\n- Properties: A searchable multi-select checkbox dropdown to isolate one or more specific listings.\n- Market: Filter by geographic market (any of the currently tracked markets, e.g. Miami, NYC/NJ Metro, Abuja, or Lagos).\n- Platform: Filter by booking platform ('Airbnb' for live daily tracking, 'Vrbo' for historical data).\n- Bedrooms: Filter by property size (e.g. 1 bedroom, 2 bedrooms, etc.).\n- Status (Currently Tracked vs Untracked): 'Currently Tracked' shows actively monitored listings (is_active = true); 'Untracked' shows archived/unmonitored listings; 'All Historical' displays everything.\n- Stay Dates (Date Range Picker): Filters the data based on the stay check-in date being priced, which automatically triggers dynamic Temporal UX States across the dashboard."
   },
   {
     "section_title": "Temporal UX States: Present, Historical, and Future Modes",
@@ -25,11 +25,11 @@
   },
   {
     "section_title": "Market Averages Summary Chips",
-    "chunk_content": "The Market Averages bar displays regional summary chips summarizing the mean price per market (e.g., '[ Miami avg $450/night (12) ]'). The parenthesized number indicates how many distinct properties contributed to the calculation. The average is computed by taking the latest available nightly price for each property matching the active filters."
+    "chunk_content": "The Market Averages bar displays regional summary chips summarizing the mean price per market (e.g., '[ Miami avg $450/night (12) ]' or '[ Abuja avg $120/night (8) ]'). The parenthesized number indicates how many distinct properties contributed to the calculation. The average is computed by taking the latest available nightly price for each property matching the active filters. A chip appears for every tracked market that has active properties under the current filter selection."
   },
   {
     "section_title": "Property Rate Snapshot Table",
-    "chunk_content": "The Property Rate Snapshot table is the core tabular view listing all properties matching the active filter criteria. Columns include:\n- Property: Listing title with an external link icon opening the live booking page.\n- Market & Platform: Region ('Miami', 'NYC/NJ Metro') and platform ('Airbnb', 'Vrbo').\n- Beds / Rating: Bedroom count with bed icon, star rating out of 5, and total review count.\n- Stay Date: The check-in date being evaluated.\n- Rate: The nightly price in USD. If a listing is unavailable, the cell displays 'Unavailable' with a tooltip and an inline mini sparkline chart showing the last 5 known rates and last recorded date.\n- vs 7d Avg: The percentage deviation from the listing's 7-day trailing average (green for above average, red for below average)."
+    "chunk_content": "The Property Rate Snapshot table is the core tabular view listing all properties matching the active filter criteria. Columns include:\n- Property: Listing title with an external link icon opening the live booking page.\n- Market & Platform: Region (any tracked market such as 'Miami', 'NYC/NJ Metro', 'Abuja', or 'Lagos') and platform ('Airbnb', 'Vrbo').\n- Beds / Rating: Bedroom count with bed icon, star rating out of 5, and total review count.\n- Stay Date: The check-in date being evaluated.\n- Rate: The nightly price in USD. If a listing is unavailable, the cell displays 'Unavailable' with a tooltip and an inline mini sparkline chart showing the last 5 known rates and last recorded date.\n- vs 7d Avg: The percentage deviation from the listing's 7-day trailing average (green for above average, red for below average)."
   },
   {
     "section_title": "Table Availability Badges & Stale Row Dimming",
@@ -61,11 +61,11 @@
   },
   {
     "section_title": "Curated Showcase Sandbox Scope",
-    "chunk_content": "The data presented on the live dashboard represents a curated, proof-of-concept sample of properties across Miami and the NYC/NJ Metro area. It is designed to demonstrate real-time pricing intelligence, volatility alerts, and architectural data pipelines. It is not an exhaustive city-wide census. Joule Dynamics builds full-scale, bespoke data pipelines tracking thousands of listings for enterprise clients."
+    "chunk_content": "The data presented on the live dashboard represents a curated, proof-of-concept sample of properties across multiple global markets — currently Miami, NYC/NJ Metro, Abuja, and Lagos. It is designed to demonstrate real-time pricing intelligence, volatility alerts, and architectural data pipelines. It is not an exhaustive city-wide census. Joule Dynamics builds full-scale, bespoke data pipelines tracking thousands of listings for enterprise clients."
   },
   {
     "section_title": "Troubleshooting: Why is Property X Missing from the Chart, Table, or Map?",
-    "chunk_content": "If a user cannot find a specific property on the dashboard:\n1. Check Global Filters: Verify if filters for Market (e.g. Miami vs NYC), Bedrooms, Platform, or Status (Tracked vs Untracked) are excluding the listing.\n2. Stay Dates Filter: If a date range is selected, listings with no data recorded for that window may be hidden.\n3. Map Zoom & Bounds: On the map, check if the property lies outside the current zoom area or is grouped inside a numbered cluster circle.\n4. Chart Auto-Selection: On the line chart, the auto-selection algorithm selects a single optimal property by default. Use the property dropdown above the chart to explicitly select the desired listing."
+    "chunk_content": "If a user cannot find a specific property on the dashboard:\n1. Check Global Filters: Verify if filters for Market (check that you have selected the correct market name), Bedrooms, Platform, or Status (Tracked vs Untracked) are excluding the listing.\n2. Stay Dates Filter: If a date range is selected, listings with no data recorded for that window may be hidden.\n3. Map Zoom & Bounds: On the map, check if the property lies outside the current zoom area or is grouped inside a numbered cluster circle.\n4. Chart Auto-Selection: On the line chart, the auto-selection algorithm selects a single optimal property by default. Use the property dropdown above the chart to explicitly select the desired listing."
   },
   {
     "section_title": "Troubleshooting: Why Does the Table Say 'Was Available' or 'Pre-open'?",
@@ -126,5 +126,9 @@
   {
     "section_title": "Managing Multiple Properties Easily",
     "chunk_content": "If you manage many properties, it can be exhausting to check every single listing one by one to see how they are doing. We solve this by building a single, simple dashboard that puts all your properties in one place. You can see your entire portfolio at a glance, instantly spotting which homes are doing well and which ones need your attention today, saving you hours of clicking around."
+  },
+  {
+    "section_title": "Multi-Market Global Coverage & Dynamic Market Registry",
+    "chunk_content": "The Joule Dynamics dashboard is built to support multiple real estate markets simultaneously across any geography. The list of active markets is dynamic and driven by the database — it is not hardcoded in the application. Currently tracked markets include Miami, NYC/NJ Metro, Abuja, and Lagos, but new markets can be onboarded by the engineering team without modifying any application code. Users can ask 'What markets do you track?' or 'Which cities are available?' at any time to receive the authoritative live list directly from the database. Each market operates with independent property tracking, scraping schedules, and pricing benchmarks."
   }
 ]
