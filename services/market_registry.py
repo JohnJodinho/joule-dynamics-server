@@ -21,7 +21,7 @@ logger = setup_logger(__name__)
 
 # Safe bootstrap fallback used only when DB is unreachable during initial load.
 # This list is NEVER used as the authoritative market list in normal operation.
-_BOOTSTRAP_FALLBACK: list[str] = ["Miami", "NYC/NJ Metro"]
+_BOOTSTRAP_FALLBACK: list[str] = ["Abuja", "Lagos", "Miami", "NYC/NJ Metro"]
 
 
 class MarketRegistry:
@@ -49,7 +49,10 @@ class MarketRegistry:
         Never blocks on a network call — always instant.
         Falls back to the bootstrap list before first successful refresh.
         """
+        if not self._initialized:
+            self.refresh()
         return list(self._markets)
+
 
     def get_formatted(self, separator: str = ", ", quote: bool = True) -> str:
         """

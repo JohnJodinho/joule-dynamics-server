@@ -696,8 +696,9 @@ async def process_chat_message(
         tool_results: list[dict] = []
         suggested_actions_list: list[str] = []
         final_reply = await run_agent_loop(
-            messages, active_tools, tool_results, suggested_actions_out=suggested_actions_list
+            messages, active_tools, tool_results, user_query=user_query, suggested_actions_out=suggested_actions_list
         )
+
 
         if (
             not final_reply

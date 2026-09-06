@@ -639,6 +639,7 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
     {
         "name": "get_market_rate_changes",
         "category": "ANOMALY",
+        "categories": ["ANOMALY", "MARKET", "PROPERTY"],
         "retrieval_description": (
             "Count of properties with any nightly rate increase or decrease in a market, "
             "number of price increases, number of price decreases, properties that changed rates, "
@@ -775,15 +776,20 @@ def discover_tools(
         # Category gating
         if categories:
             allowed_cats = {c.upper() for c in categories}
-            candidate_indices = [
-                i for i, entry in enumerate(TOOL_REGISTRY)
-                if entry["category"].upper() in allowed_cats
-            ]
+            candidate_indices = []
+            for i, entry in enumerate(TOOL_REGISTRY):
+                entry_cats = entry.get("categories")
+                if entry_cats:
+                    if any(c.upper() in allowed_cats for c in entry_cats):
+                        candidate_indices.append(i)
+                elif entry.get("category", "").upper() in allowed_cats:
+                    candidate_indices.append(i)
         else:
             candidate_indices = list(range(len(TOOL_REGISTRY)))
 
         if not candidate_indices:
             candidate_indices = list(range(len(TOOL_REGISTRY)))
+
 
         q_vec = embed_model.encode([user_query], normalize_embeddings=True)[0]
         candidate_vecs = tool_vectors[candidate_indices]
