@@ -209,6 +209,39 @@ REAL_ESTATE_TOOLS = [
     {
         "type": "function",
         "function": {
+            "name": "get_market_rate_changes",
+            "description": (
+                "Count how many properties in a market had ANY nightly rate increase or decrease "
+                "within the last N days — regardless of magnitude, not just 25%+ spikes. "
+                "Returns: total properties with changes, number of increases, number of decreases, "
+                "average % change, and up to 5 example properties (aggregated, no token bloat). "
+                "Use for: 'how many properties had rate changes', 'rate increases or decreases', "
+                "'price movements', 'any rate change at all', 'which listings adjusted their rates'. "
+                f"Currently tracked markets: {_market_desc()}"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "p_market": {
+                        "type": "string",
+                        "description": f"Market region to query. Currently tracked: {_market_desc()}",
+                    },
+                    "p_days": {
+                        "type": "integer",
+                        "description": "Lookback window in days (default 7, max 30). Use 1 for 'last 24h', 3 for 'last few days', 7 for 'last week'.",
+                    },
+                    "p_limit": {
+                        "type": "integer",
+                        "description": "Max example properties in response (default 5, max 5 — kept small to avoid token bloat).",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "get_spike_alerts",
             "description": "Fetch sudden sharp price changes and 25%+ price spikes, sorted by deviation intensity. Supports ranked slices (top, bottom, middle).",
             "parameters": {
@@ -604,88 +637,100 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
         "schema": REAL_ESTATE_TOOLS[3],
     },
     {
+        "name": "get_market_rate_changes",
+        "category": "ANOMALY",
+        "retrieval_description": (
+            "Count of properties with any nightly rate increase or decrease in a market, "
+            "number of price increases, number of price decreases, properties that changed rates, "
+            "rate movements not just spikes, any rate change at all, how many listings adjusted rates, "
+            "properties with rate increases or decreases in Nigeria Abuja Lagos, how many had price changes, "
+            "nightly rate went up down in last few days."
+        ),
+        "schema": REAL_ESTATE_TOOLS[4],
+    },
+    {
         "name": "get_spike_alerts",
         "category": "ANOMALY",
         "retrieval_description": "Sudden sharp price jumps, 25% plus rate increases, price spikes, surge pricing alerts, unseasonal rate surges in any tracked market, ranked slices.",
-        "schema": REAL_ESTATE_TOOLS[4],
+        "schema": REAL_ESTATE_TOOLS[5],
     },
     {
         "name": "get_rate_anomaly_report",
         "category": "ANOMALY",
         "retrieval_description": "Anomalous pricing patterns, drastic rate drops, price crashes, listings deviating significantly from market baseline.",
-        "schema": REAL_ESTATE_TOOLS[5],
+        "schema": REAL_ESTATE_TOOLS[6],
     },
     {
         "name": "get_most_volatile_properties",
         "category": "ANOMALY",
         "retrieval_description": "Listings with the most frequent price fluctuations, highest number of rate adjustments, unstable dynamic pricing, ranked slices.",
-        "schema": REAL_ESTATE_TOOLS[6],
+        "schema": REAL_ESTATE_TOOLS[7],
     },
     {
         "name": "get_property_snapshot",
         "category": "PROPERTY",
         "retrieval_description": "Detailed current status and single listing profile for a specific property UUID, property name, or listing URL.",
-        "schema": REAL_ESTATE_TOOLS[7],
+        "schema": REAL_ESTATE_TOOLS[8],
     },
     {
         "name": "get_property_detail",
         "category": "PROPERTY",
         "retrieval_description": "Deep single-property exploration, full listing profile, active tracking status, coordinates, URL, and daily-aggregated historical rate revision log.",
-        "schema": REAL_ESTATE_TOOLS[8],
+        "schema": REAL_ESTATE_TOOLS[9],
     },
     {
         "name": "get_property_rate_changes",
         "category": "PROPERTY",
         "retrieval_description": "Historical log of price changes, chronological rate revisions, daily past rate adjustments for a single property.",
-        "schema": REAL_ESTATE_TOOLS[9],
+        "schema": REAL_ESTATE_TOOLS[10],
     },
     {
         "name": "compare_properties",
         "category": "PROPERTY",
         "retrieval_description": "Side-by-side head-to-head comparison of multiple property listings, prices, bedrooms, and metrics.",
-        "schema": REAL_ESTATE_TOOLS[10],
+        "schema": REAL_ESTATE_TOOLS[11],
     },
     {
         "name": "search_properties",
         "category": "PROPERTY",
         "retrieval_description": "Find, list, and filter property listings by bedroom count, price range, market region, availability status, listing name, or ranked slices.",
-        "schema": REAL_ESTATE_TOOLS[11],
+        "schema": REAL_ESTATE_TOOLS[12],
     },
     {
         "name": "get_availability_rate",
         "category": "PROPERTY",
         "retrieval_description": "Percentage of units booked versus available, occupancy rates, reservation calendar status in any tracked market or city.",
-        "schema": REAL_ESTATE_TOOLS[12],
+        "schema": REAL_ESTATE_TOOLS[13],
     },
     {
         "name": "geocode_address",
         "category": "GEO",
         "retrieval_description": "Convert street address, landmark, or neighborhood name into latitude and longitude geographic coordinates.",
-        "schema": REAL_ESTATE_TOOLS[13],
+        "schema": REAL_ESTATE_TOOLS[14],
     },
     {
         "name": "get_nearby_properties",
         "category": "GEO",
         "retrieval_description": "Find listings closest to a specific geographic coordinate, landmark, or neighborhood radius.",
-        "schema": REAL_ESTATE_TOOLS[14],
+        "schema": REAL_ESTATE_TOOLS[15],
     },
     {
         "name": "get_distance_km",
         "category": "GEO",
         "retrieval_description": "Calculate straight-line distance in kilometers between two properties or locations by UUID.",
-        "schema": REAL_ESTATE_TOOLS[15],
+        "schema": REAL_ESTATE_TOOLS[16],
     },
     {
         "name": "get_tracked_markets",
         "category": "MARKET",
         "retrieval_description": "List all cities and regions currently supported and monitored in the database, fetch the live market registry.",
-        "schema": REAL_ESTATE_TOOLS[16],
+        "schema": REAL_ESTATE_TOOLS[17],
     },
     {
         "name": "get_recently_changed_tracking",
         "category": "MARKET",
         "retrieval_description": "Properties recently added to or removed from active monitoring tracking status.",
-        "schema": REAL_ESTATE_TOOLS[17],
+        "schema": REAL_ESTATE_TOOLS[18],
     },
 ]
 

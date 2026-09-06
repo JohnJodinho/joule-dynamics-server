@@ -257,6 +257,18 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
             "p_history_days": days,
         }
 
+    # ── get_market_rate_changes ──
+    elif func_name == "get_market_rate_changes":
+        market = args.get("p_market") or args.get("market")
+        days = _clamp(args.get("p_days") or args.get("days"), 1, 30, default=7)
+        # Hard cap at 5 — examples array must stay tiny to avoid token bloat
+        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 5, default=5)
+        clean_args = {
+            "p_market": str(market) if market else None,
+            "p_days": days,
+            "p_limit": limit,
+        }
+
     else:
         return {
             "status": "error",
