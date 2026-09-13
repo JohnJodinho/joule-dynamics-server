@@ -372,6 +372,10 @@ def _resolve_active_tools(classification: str, user_query: str, messages: list[d
     if classification == "PATH_B":
         return [SUGGEST_ACTIONS_TOOL]
 
+    if classification == "ALERT_SUBSCRIPTION":
+        from services.alert_tool_schema import CREATE_ALERT_SUBSCRIPTION_TOOL
+        return [CREATE_ALERT_SUBSCRIPTION_TOOL, SUGGEST_ACTIONS_TOOL]
+
     return None
 
 

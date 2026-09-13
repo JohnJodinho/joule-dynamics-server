@@ -91,7 +91,7 @@ def _assert_stream_events(events: list, tool_name: str):
     assert tool_call_events[0]["tool"] == tool_name, f"Expected {tool_name}, got {tool_call_events[0]['tool']}"
 
 
-async def test_tool_non_streaming(tool_name: str, tool_args: dict) -> dict:
+async def _run_tool_non_streaming(tool_name: str, tool_args: dict) -> dict:
     """Tests a single tool execution within run_agent_loop with mocked LLM calls."""
     call_count = 0
 
@@ -132,7 +132,7 @@ async def test_tool_non_streaming(tool_name: str, tool_args: dict) -> dict:
         }
 
 
-async def test_tool_streaming(tool_name: str, tool_args: dict) -> dict:
+async def _run_tool_streaming(tool_name: str, tool_args: dict) -> dict:
     """Tests a single tool execution within run_agent_loop_streaming with mocked LLM calls."""
     call_count = 0
 
@@ -176,7 +176,7 @@ async def _run_single_case(idx: int, tool_name: str, tool_args: dict) -> tuple[i
     failures = []
 
     try:
-        res_ns = await test_tool_non_streaming(tool_name, tool_args)
+        res_ns = await _run_tool_non_streaming(tool_name, tool_args)
         print(f"[{idx:02d}/22] [SYNC]  PASS: {tool_name.ljust(32)} -> {res_ns['preview']}")
         passes += 1
     except Exception as exc:
@@ -184,7 +184,7 @@ async def _run_single_case(idx: int, tool_name: str, tool_args: dict) -> tuple[i
         failures.append((tool_name, "non-streaming", str(exc)))
 
     try:
-        res_s = await test_tool_streaming(tool_name, tool_args)
+        res_s = await _run_tool_streaming(tool_name, tool_args)
         print(f"[{idx:02d}/22] [STREAM] PASS: {tool_name.ljust(32)} -> {res_s['events_count']} events yielded")
         passes += 1
     except Exception as exc:

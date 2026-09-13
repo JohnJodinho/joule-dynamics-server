@@ -37,3 +37,19 @@ CONTACT_WHATSAPP = os.environ.get("CONTACT_WHATSAPP", "1234567890")
 
 MARKET_CACHE_TTL_SECONDS = int(os.environ.get("MARKET_CACHE_TTL_SECONDS", "300"))
 GEOCODE_COUNTRY_FILTER = os.environ.get("GEOCODE_COUNTRY_FILTER", "")
+
+EMAIL_SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
+EMAIL_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "587"))
+EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "jouledynamicscto@gmail.com")
+EMAIL_SMTP_PASSWORD = os.environ.get("EMAIL_SMTP_PASSWORD", "")
+ALERT_BASE_URL = os.environ.get(
+    "ALERT_BASE_URL",
+    os.environ.get("CONFIRMATION_BASE_URL", "https://johnalbarkaibrahim-sentimentscope.hf.space"),
+)
+SUPABASE_SERVICE_ROLE_KEY = os.environ.get(
+    "SUPABASE_SERVICE_ROLE_KEY", os.environ.get("SUPABASE_KEY", "")
+)
+INTERNAL_API_KEY = os.environ.get("INTERNAL_API_KEY", "")
+ALERT_COOLDOWN_HOURS = int(os.environ.get("ALERT_COOLDOWN_HOURS", "24"))
+MAX_SUBSCRIPTIONS_PER_EMAIL = int(os.environ.get("MAX_SUBSCRIPTIONS_PER_EMAIL", "5"))
+CONFIRMATION_EXPIRY_HOURS = int(os.environ.get("CONFIRMATION_EXPIRY_HOURS", "48"))

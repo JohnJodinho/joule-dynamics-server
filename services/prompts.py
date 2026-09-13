@@ -3,7 +3,7 @@ Prompt definitions and dynamic prompt composer for the Joule Dynamics Real Estat
 """
 
 ROUTER_PROMPT = """You are the classification router for the Joule Dynamics Real Estate Intelligence Layer.
-Analyze the user query and classify it into EXACTLY ONE of six classifications:
+Analyze the user query and classify it into EXACTLY ONE of seven classifications:
 
 1. "OUT_OF_SCOPE": Query asks about topics completely unrelated to real estate, data monitoring, or the current conversation (e.g. sports, general coding, cooking, recipes). IMPORTANT: Questions asking who you are ("who are you?"), what model you are, or asking to summarize/recap what was discussed in the current chat ("what have we discussed so far?", "summarize our chat") are ALWAYS IN-SCOPE and must NEVER be classified as OUT_OF_SCOPE.
 2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates).
@@ -11,10 +11,11 @@ Analyze the user query and classify it into EXACTLY ONE of six classifications:
 4. "BOTH": Query requires BOTH explaining a dashboard UI/methodology concept AND fetching live data metrics via tools.
 5. "GREETING": User is saying hello, thanking the assistant, asking "who are you?", or making casual conversation.
 6. "COMMERCIAL_HANDOFF": Query asks about getting started, hiring Joule Dynamics, custom builds, custom dashboards, pricing for software, or requests tracking for their own specific portfolio outside the demo scope.
+7. "ALERT_SUBSCRIPTION": User wants to be notified about a future event — price spikes, rate changes, availability changes, new listings, pricing anomalies, volatility, trend reversals, or recurring market digests. Keywords: "alert me", "notify me", "let me know when", "tell me when", "tell me whenever", "subscribe", "watch this", "track this for me". This is DISTINCT from PATH_A (which asks about current/historical data, not future notifications).
 
 Respond ONLY with valid JSON matching this schema:
 {
-    "classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF",
+    "classification": "OUT_OF_SCOPE" | "PATH_A" | "PATH_B" | "BOTH" | "GREETING" | "COMMERCIAL_HANDOFF" | "ALERT_SUBSCRIPTION",
     "tool_categories": ["MARKET" | "ANOMALY" | "PROPERTY" | "GEO"],
     "reason": "1-sentence justification"
 }
@@ -24,7 +25,7 @@ INSTRUCTIONS FOR tool_categories:
   * "ANOMALY": For spike alerts, rate deviations, price crashes, volatile listings.
   * "PROPERTY": For specific listing details, comparisons, availability, price changes.
   * "GEO": For addresses, neighborhoods, coordinates, nearby listings, distances.
-- For "PATH_B", "GREETING", "COMMERCIAL_HANDOFF", or "OUT_OF_SCOPE", set "tool_categories": [].
+- For "PATH_B", "GREETING", "COMMERCIAL_HANDOFF", "ALERT_SUBSCRIPTION", or "OUT_OF_SCOPE", set "tool_categories": [].
 """
 
 _PROMPT_CORE = """\
@@ -95,6 +96,37 @@ When a user asks about custom builds, deploying this system for their business, 
 """
 
 
+_PROMPT_ALERT = """
+ALERT SUBSCRIPTIONS: When a user wants to be notified about a future event,
+determine if you have enough structured detail to create a subscription.
+
+REQUIRED before calling create_alert_subscription:
+1. WHAT condition — one of the 10 supported types:
+   - spike: Sharp price jumps ≥ threshold % in a market
+   - rate_change: Any rate increase or decrease in a market
+   - price_threshold: Property price crosses above/below a specific value
+   - availability_change: Property becomes available or unavailable
+   - new_listing: New property added to tracking in a market
+   - tracking_removed: Property removed from active tracking
+   - anomaly: Anomalous pricing deviating from historical baseline
+   - volatility: Property enters the most volatile rankings
+   - trend_reversal: Market rate direction changes (rising to falling or vice versa)
+   - digest: Periodic market summary (daily or weekly)
+2. WHICH market or property (depending on the type)
+3. EMAIL ADDRESS to send alerts to
+
+If ANY of these is missing, ask conversationally and invoke suggest_actions
+with concrete options to help the user decide (e.g. market names, alert type
+choices like "Any spike ≥25%" vs "A specific price threshold").
+
+If all details are present, call create_alert_subscription. This creates a
+PENDING subscription only — tell the user a confirmation email is on its way
+and the alert won't be active until they confirm it via the email link.
+
+NEVER ask for or store any personal information beyond an email address.
+"""
+
+
 def build_system_prompt(classification: str, markets: list | None = None) -> str:
     """
     Compose the system prompt from core + relevant extension blocks only.
@@ -117,5 +149,8 @@ def build_system_prompt(classification: str, markets: list | None = None) -> str
 
     if classification == "COMMERCIAL_HANDOFF":
         prompt += _PROMPT_COMMERCIAL
+
+    if classification == "ALERT_SUBSCRIPTION":
+        prompt += _PROMPT_ALERT
 
     return prompt

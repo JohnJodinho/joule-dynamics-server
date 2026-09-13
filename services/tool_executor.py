@@ -86,11 +86,23 @@ async def _data_export_handler(func_args: dict) -> dict:
     return await upload_document_to_appwrite(content, "md")
 
 
+async def _alert_subscription_handler(func_args: dict) -> dict:
+    """Forwards alert subscription creation to alert_service."""
+    from services.alert_service import create_pending_subscription
+    return await create_pending_subscription(
+        email=func_args.get("email", ""),
+        criteria_type=func_args.get("criteria_type", ""),
+        criteria=func_args.get("criteria", {}),
+        raw_text=func_args.get("raw_request_text", ""),
+    )
+
+
 _LOCAL_HANDLERS = {
     "suggest_actions": _suggest_actions_handler,
     "generate_contact_buttons": _contact_buttons_handler,
     "geocode_address": _geocode_handler,
     "generate_data_export": _data_export_handler,
+    "create_alert_subscription": _alert_subscription_handler,
 }
 
 

@@ -17,7 +17,8 @@ from services.prompts import ROUTER_PROMPT
 logger = setup_logger(__name__)
 
 _VALID_CLASSIFICATIONS = frozenset({
-    "OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING", "COMMERCIAL_HANDOFF"
+    "OUT_OF_SCOPE", "PATH_A", "PATH_B", "BOTH", "GREETING", "COMMERCIAL_HANDOFF",
+    "ALERT_SUBSCRIPTION",
 })
 
 
