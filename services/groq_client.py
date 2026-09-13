@@ -1,12 +1,5 @@
 """
-services/groq_client.py
-────────────────────────
-Groq SDK singleton, model constants, and a retry-aware API wrapper.
-
-Architectural fixes:
-  #7 - Exponential backoff with jitter for transient 429/5xx errors.
-  #8 - Structural error classification so fallback models are only tried
-       for transient failures, never for schema/payload errors.
+Groq SDK singleton, model constants, and retry-aware API wrapper.
 """
 
 import asyncio
@@ -27,10 +20,8 @@ from config import (
 
 logger = setup_logger(__name__)
 
-# ── Singleton Groq client ──────────────────────────────────────────────────────
 groq_client = Groq(api_key=GROQ_API_KEY)
 
-# ── Error classification ───────────────────────────────────────────────────────
 _STRUCTURAL_ERROR_CODES = frozenset({
     "tool_use_failed",
     "invalid_request_error",
@@ -46,7 +37,7 @@ def is_structural_error(exc: Exception) -> bool:
     body = getattr(exc, "body", {}) or {}
     if isinstance(body, dict):
         code = body.get("error", {}).get("code", "") or ""
-        msg  = body.get("error", {}).get("message", "") or ""
+        msg = body.get("error", {}).get("message", "") or ""
         if code in _STRUCTURAL_ERROR_CODES:
             return True
         if "tool choice is none" in msg.lower():
@@ -78,9 +69,8 @@ async def groq_call(
     response_format: dict = None,
 ):
     """
-    Async Groq completion call with exponential backoff + jitter.
-    - Raises immediately on structural 400 errors (do not waste retries).
-    - Returns the raw Groq ChatCompletion object on success.
+    Async Groq completion call with exponential backoff and jitter.
+    Raises immediately on structural 400 errors without retrying.
     """
     last_exc = None
 
@@ -108,7 +98,7 @@ async def groq_call(
         except Exception as exc:
             last_exc = exc
             if is_structural_error(exc):
-                raise  # Never retry structural errors
+                raise
             if is_retryable_error(exc):
                 delay = (base_delay * (2 ** attempt)) + random.uniform(0, 0.5)
                 logger.warning(

@@ -2,7 +2,7 @@
 RAG Chat — v1 API routes.
 
 Endpoints:
-  POST /api/v1/rag/chat  — Amara Home & Kitchen customer support RAG chat
+  POST /api/v1/rag/chat — Amara Home & Kitchen customer support RAG chat
 """
 import logging
 import os
@@ -24,13 +24,13 @@ router = APIRouter(
     tags=["RAG Chat — v1"],
 )
 
-# ── Model / client initialisation (lazy singleton pattern) ────────────────────
 _embed_model = None
 _kb_embeddings = None
 _groq_client = None
 
 
 def _get_embed_model():
+    """Lazily loads and caches the shared embedding model."""
     global _embed_model
     if _embed_model is None:
         _embed_model = get_embedding_model()
@@ -38,6 +38,7 @@ def _get_embed_model():
 
 
 def _get_kb_embeddings():
+    """Lazily loads and caches the pre-computed numpy knowledge base embeddings."""
     global _kb_embeddings
     if _kb_embeddings is None:
         _kb_embeddings = np.load("kb_embeddings.npy")
@@ -45,6 +46,7 @@ def _get_kb_embeddings():
 
 
 def _get_groq():
+    """Lazily initializes the Groq client instance."""
     global _groq_client
     if _groq_client is None:
         _groq_client = Groq(api_key=os.environ.get("GROQ_API_KEY", ""))
@@ -61,8 +63,6 @@ INFORMATION:
 """
 
 
-# ── Request / Response models ─────────────────────────────────────────────────
-
 class RagChatRequest(BaseModel):
     question: str = Field(..., min_length=1, max_length=1000)
 
@@ -71,9 +71,8 @@ class RagChatResponse(BaseModel):
     answer: str
 
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
-
 def _retrieve(question: str, top_k: int = 3) -> list:
+    """Retrieves the top k most relevant knowledge base chunks for a question."""
     embed = _get_embed_model()
     kb = _get_kb_embeddings()
     q_emb = embed.encode([question], normalize_embeddings=True)[0]
@@ -83,6 +82,7 @@ def _retrieve(question: str, top_k: int = 3) -> list:
 
 
 def _ask_groq(question: str, context: str, model: str = "llama-3.3-70b-versatile") -> str:
+    """Invokes Groq chat completion with the provided context and system prompt."""
     client = _get_groq()
     resp = client.chat.completions.create(
         model=model,
@@ -96,8 +96,6 @@ def _ask_groq(question: str, context: str, model: str = "llama-3.3-70b-versatile
     return resp.choices[0].message.content
 
 
-# ── Routes ────────────────────────────────────────────────────────────────────
-
 @router.post(
     "/chat",
     response_model=RagChatResponse,
@@ -108,6 +106,7 @@ def _ask_groq(question: str, context: str, model: str = "llama-3.3-70b-versatile
     summary="Customer support RAG chat (Amara Home & Kitchen)",
 )
 def rag_chat(req: RagChatRequest):
+    """Answers customer queries based on the Amara Home & Kitchen knowledge base."""
     context_chunks = _retrieve(req.question)
     context = "\n".join(context_chunks)
     try:

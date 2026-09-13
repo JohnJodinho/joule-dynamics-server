@@ -2,16 +2,11 @@
 services/tool_executor.py
 ──────────────────────────
 Tool dispatch layer — executes tool calls and normalizes assistant messages.
-
-Architectural fixes:
-  #2 - Universal tool recovery: any tool in failed_generation is executed,
-       not just generate_data_export.
-  #5 - normalize_assistant_message() strips the internal `reasoning` field
-       and converts ChatCompletionMessage objects to clean dicts so they
-       never contaminate the conversation context.
 """
 
+import asyncio
 import json
+import re
 import urllib.parse
 from services.observability import setup_logger
 from services.supabase_service import execute_tool_rpc
@@ -21,18 +16,8 @@ from config import CONTACT_EMAIL, CONTACT_WHATSAPP
 logger = setup_logger(__name__)
 
 
-# ─── MESSAGE NORMALIZER ───────────────────────────────────────────────────────
-
 def normalize_assistant_message(msg) -> dict:
-    """
-    Convert a ChatCompletionMessage SDK object to a clean dict.
-
-    Strips internal fields: `reasoning`, `logprobs`, `function_call`, etc.
-    These fields must NEVER appear in the messages[] sent to subsequent
-    LLM calls — they inflate token usage and contaminate context.
-
-    Fix #5: reasoning field was leaking into history via Python __repr__.
-    """
+    """Converts a ChatCompletionMessage SDK object to a clean dict, stripping internal fields."""
     if getattr(msg, "tool_calls", None):
         return {
             "role": "assistant",
@@ -55,48 +40,6 @@ def normalize_assistant_message(msg) -> dict:
     }
 
 
-# ─── TOOL EXECUTOR ────────────────────────────────────────────────────────────
-
-async def execute_tool_by_name(func_name: str, func_args: dict) -> dict:
-    """
-    Dispatch a tool call by name. Returns a result dict with {"status": ...}.
-
-    Python-side tools (generate_contact_buttons, geocode_address,
-    generate_data_export) are handled here. All other tool names are forwarded
-    to the Supabase RPC layer.
-    """
-    if func_name == "suggest_actions":
-        actions = func_args.get("actions") or func_args.get("options") or []
-        return {
-            "status": "success",
-            "message": (
-                "Interactive action button chips have been registered and will be rendered automatically "
-                "by the UI below the message. Do NOT write markdown links, dummy URLs, or repetitive link lists in your text response."
-            ),
-            "actions": actions,
-        }
-
-    if func_name == "generate_contact_buttons":
-        raw_message = func_args.get("message", "Hi, I'd like to discuss a custom build.")
-        encoded_message = urllib.parse.quote(raw_message)
-        return {
-            "status": "success",
-            "email_button_markdown": f"[Get in touch via Email](mailto:{CONTACT_EMAIL})",
-            "whatsapp_button_markdown": f"[Chat on WhatsApp](https://wa.me/{CONTACT_WHATSAPP}?text={encoded_message})",
-        }
-
-    if func_name == "geocode_address":
-        return geocode_address_handler(func_args.get("address", ""))
-
-    if func_name == "generate_data_export":
-        from services.appwrite_service import upload_document_to_appwrite
-        content = func_args.get("content", "")
-        return await upload_document_to_appwrite(content, "md")
-
-    # Default: Supabase RPC
-    return await execute_tool_rpc(func_name, func_args)
-
-
 def parse_tool_args(raw_arguments) -> dict:
     """Safely parse tool call arguments — handles both str and dict."""
     if isinstance(raw_arguments, str):
@@ -107,23 +50,62 @@ def parse_tool_args(raw_arguments) -> dict:
     return raw_arguments or {}
 
 
-def parse_failed_generation(failed_gen: str) -> tuple[str | None, dict | None]:
-    """
-    Extract tool name and arguments from a Groq 400 failed_generation string.
+def _suggest_actions_handler(func_args: dict) -> dict:
+    """Handles suggest_actions tool by registering action chips."""
+    actions = func_args.get("actions") or func_args.get("options") or []
+    return {
+        "status": "success",
+        "message": (
+            "Interactive action button chips have been registered and will be rendered automatically "
+            "by the UI below the message. Do NOT write markdown links, dummy URLs, or repetitive link lists in your text response."
+        ),
+        "actions": actions,
+    }
 
-    The model may format the failed call in two ways:
-      - {"name": "func", "arguments": {...}}  (JSON dict)
-      - <function=func_name>{...}             (legacy template format)
 
-    Fix #2: Previously only generate_data_export was handled. Now all tools
-    recovered from failed_generation are dispatched through execute_tool_by_name.
-    """
-    import re
+def _contact_buttons_handler(func_args: dict) -> dict:
+    """Generates markdown contact buttons for email and WhatsApp."""
+    raw_message = func_args.get("message", "Hi, I'd like to discuss a custom build.")
+    encoded_message = urllib.parse.quote(raw_message)
+    return {
+        "status": "success",
+        "email_button_markdown": f"[Get in touch via Email](mailto:{CONTACT_EMAIL})",
+        "whatsapp_button_markdown": f"[Chat on WhatsApp](https://wa.me/{CONTACT_WHATSAPP}?text={encoded_message})",
+    }
 
-    if not failed_gen:
-        return None, None
 
-    # Strategy 1: Direct JSON parse
+def _geocode_handler(func_args: dict) -> dict:
+    """Forwards geocode requests to the geocode_address_handler."""
+    return geocode_address_handler(func_args.get("address", ""))
+
+
+async def _data_export_handler(func_args: dict) -> dict:
+    """Uploads export markdown to Appwrite storage."""
+    from services.appwrite_service import upload_document_to_appwrite
+    content = func_args.get("content", "")
+    return await upload_document_to_appwrite(content, "md")
+
+
+_LOCAL_HANDLERS = {
+    "suggest_actions": _suggest_actions_handler,
+    "generate_contact_buttons": _contact_buttons_handler,
+    "geocode_address": _geocode_handler,
+    "generate_data_export": _data_export_handler,
+}
+
+
+async def execute_tool_by_name(func_name: str, func_args: dict) -> dict:
+    """Dispatches a tool call by name, routing to local handlers or Supabase RPC."""
+    handler = _LOCAL_HANDLERS.get(func_name)
+    if handler:
+        if asyncio.iscoroutinefunction(handler):
+            return await handler(func_args)
+        return handler(func_args)
+    return await execute_tool_rpc(func_name, func_args)
+
+
+def _parse_json_direct(failed_gen: str) -> tuple[str | None, dict | None]:
+    """Attempts direct JSON parse of failed generation payload."""
     try:
         data = json.loads(failed_gen)
         if isinstance(data, dict) and "name" in data:
@@ -136,25 +118,41 @@ def parse_failed_generation(failed_gen: str) -> tuple[str | None, dict | None]:
             return data["name"], args if isinstance(args, dict) else {}
     except Exception:
         pass
+    return None, None
 
-    # Strategy 2: Regex for {"name": "...", "arguments": {...}}
-    match = re.search(
-        r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}',
-        failed_gen,
-        re.DOTALL,
-    )
+
+def _parse_json_regex(failed_gen: str) -> tuple[str | None, dict | None]:
+    """Attempts regex extraction of JSON name/arguments dictionary."""
+    pattern = r'\{\s*"name"\s*:\s*"([a-zA-Z0-9_]+)"\s*,\s*"arguments"\s*:\s*(\{.*?\})\s*\}'
+    match = re.search(pattern, failed_gen, re.DOTALL)
     if match:
         try:
             return match.group(1), json.loads(match.group(2))
         except Exception:
             pass
+    return None, None
 
-    # Strategy 3: Regex for <function=name>{args}
-    match = re.search(r"<function=([a-zA-Z0-9_]+)[>\s]*(\{.*?\})", failed_gen, re.DOTALL)
+
+def _parse_function_tag(failed_gen: str) -> tuple[str | None, dict | None]:
+    """Attempts regex extraction of legacy <function=name>{args} tag format."""
+    pattern = r"<function=([a-zA-Z0-9_]+)[>\s]*(\{.*?\})"
+    match = re.search(pattern, failed_gen, re.DOTALL)
     if match:
         try:
             return match.group(1), json.loads(match.group(2))
         except Exception:
             pass
+    return None, None
+
+
+def parse_failed_generation(failed_gen: str) -> tuple[str | None, dict | None]:
+    """Extracts tool name and arguments from a Groq 400 failed_generation string."""
+    if not failed_gen:
+        return None, None
+
+    for parser in (_parse_json_direct, _parse_json_regex, _parse_function_tag):
+        name, args = parser(failed_gen)
+        if name is not None:
+            return name, args
 
     return None, None

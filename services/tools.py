@@ -1,616 +1,29 @@
-"""
-Real Estate Intelligence Layer - Tool Definitions & Dynamic Tool Discovery
+"""Real Estate Intelligence Layer - Tool Registry & Dynamic Tool Discovery."""
 
-Implements Hierarchical Dynamic Tool Discovery / Schema Gating:
-  - Exact 1:1 parameter alignment with Supabase Postgres DDL signatures in pulse_ai_revamped_rpcs.sql.
-  - Curated, semantically discriminative retrieval descriptions for all tools.
-  - Pre-embedded vector representations for ~20-30ms local cosine ranking.
-  - Universal tools (suggest_actions, generate_data_export, generate_contact_buttons).
-"""
-from typing import List, Dict, Any, Optional
+from __future__ import annotations
+
+from typing import Any, Dict, List, Optional
 import numpy as np
 
-
-def _market_desc() -> str:
-    """
-    Returns a live, formatted string of currently tracked market names.
-    Called inline within tool description strings so the LLM always sees the
-    current market list when tool schemas are built for a request.
-    Example output: "'Miami', 'NYC/NJ Metro', 'Abuja', 'Lagos'"
-    """
-    try:
-        from services.market_registry import market_registry
-        markets = market_registry.get_markets()
-        if markets:
-            return ", ".join(f"'{m}'" for m in markets)
-    except Exception:
-        pass
-    return "any tracked market (call get_tracked_markets for the live list)"
-
-# ── 1. UNIVERSAL TOOLS (Always attached to tool payloads) ──
-
-SUGGEST_ACTIONS_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "suggest_actions",
-        "description": (
-            "Suggest 0 to 4 relevant interactive action buttons or clarifying options for the user based on the conversation. "
-            "Return an empty array actions: [] if no follow-up action is genuinely useful or if the conversation has concluded naturally - do not force suggestions."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "actions": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "List of 0 to 4 short, action-oriented button labels (max 35 chars each). Empty list [] if no follow-up is needed."
-                }
-            },
-            "required": ["actions"]
-        }
-    }
-}
-
-GENERATE_DATA_EXPORT_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_data_export",
-        "description": "Generate a downloadable file export (Markdown document or CSV report) containing real estate analysis or property tables requested by the user.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The complete markdown or CSV text content to export into a downloadable file."
-                }
-            },
-            "required": ["content"]
-        }
-    }
-}
-
-GENERATE_CONTACT_BUTTONS_TOOL = {
-    "type": "function",
-    "function": {
-        "name": "generate_contact_buttons",
-        "description": "Generate interactive contact buttons (Email and WhatsApp) for custom engineering inquiries, bespoke scraping needs, or system requests.",
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": "A personalized, plain English greeting message to pre-fill in the WhatsApp chat based on the user's inquiry."
-                }
-            },
-            "required": ["message"],
-        },
-    }
-}
-
-# ── 2. DOMAIN TOOLS (Exact Supabase SQL Signatures) ──
-
-REAL_ESTATE_TOOLS = [
-    # ── DASHBOARD & MARKET OVERVIEW ──
-    {
-        "type": "function",
-        "function": {
-            "name": "get_real_estate_kpis",
-            "description": "Fetch overall Real Estate Rate Monitor top KPI metrics (properties tracked, available vs booked count, availability %, 7-day rate changes, 25%+ price spikes, and scrape health), optionally filtered by market, platform, bedrooms, active status, specific property IDs, or stay date window.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Optional market region filter. Currently tracked: {_market_desc()}",
-                    },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional booking platform filter ('airbnb' or 'vrbo')",
-                    },
-                    "p_bedrooms": {
-                        "type": "integer",
-                        "description": "Optional bedroom count filter (e.g. 1, 2, 3)",
-                    },
-                    "p_is_active": {
-                        "type": "boolean",
-                        "description": "Optional tracking status filter: true for currently tracked, false for untracked/archived",
-                    },
-                    "p_property_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "Optional list of specific property UUIDs to filter KPIs",
-                    },
-                    "p_start_date": {
-                        "type": "string",
-                        "description": "Optional stay date window start (YYYY-MM-DD)",
-                    },
-                    "p_end_date": {
-                        "type": "string",
-                        "description": "Optional stay date window end (YYYY-MM-DD)",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_market_averages",
-            "description": "Fetch average nightly rates and 7-day trailing average price comparisons for current active listings in a market. Use when the user asks for market baseline, average prices, or nightly benchmarks.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "market_param": {
-                        "type": "string",
-                        "description": f"Market region name. Currently tracked markets: {_market_desc()}",
-                    }
-                },
-                "required": ["market_param"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_market_snapshot",
-            "description": f"Fetch a comprehensive single-day snapshot for a market (active property count, average nightly rate, min rate, max rate, availability rate %, and rate spike event count). Use when the user asks for a daily market overview, daily summary, market condition, or specific date performance in any tracked market.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Market region. Currently tracked markets: {_market_desc()}",
-                    },
-                    "p_start_date": {
-                        "type": "string",
-                        "description": "Snapshot date start (YYYY-MM-DD). Defaults to yesterday if omitted.",
-                    },
-                    "p_end_date": {
-                        "type": "string",
-                        "description": "Snapshot date end (YYYY-MM-DD). Defaults to yesterday if omitted.",
-                    },
-                },
-                "required": ["p_market"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_market_trend",
-            "description": f"Fetch historical daily average rate trends for a market over a specified number of days (up to 90 days). Use when the user asks how rates have changed over time, weekly/monthly trajectories, or market direction in any tracked market.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Market region. Currently tracked markets: {_market_desc()}",
-                    },
-                    "p_days": {
-                        "type": "integer",
-                        "description": "Number of historical days to analyze (default 14, max 90)",
-                    },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional booking platform filter ('airbnb' or 'vrbo')",
-                    },
-                    "p_is_active": {
-                        "type": "boolean",
-                        "description": "Optional active status filter (default true to exclude frozen historical properties)",
-                    },
-                },
-                "required": ["p_market"],
-            },
-        },
-    },
-
-    # ── VOLATILITY & ANOMALIES ──
-    {
-        "type": "function",
-        "function": {
-            "name": "get_market_rate_changes",
-            "description": (
-                "Count how many properties in a market had ANY nightly rate increase or decrease "
-                "within the last N days — regardless of magnitude, not just 25%+ spikes. "
-                "Returns: total properties with changes, number of increases, number of decreases, "
-                "average % change, and up to 5 example properties (aggregated, no token bloat). "
-                "Use for: 'how many properties had rate changes', 'rate increases or decreases', "
-                "'price movements', 'any rate change at all', 'which listings adjusted their rates'. "
-                f"Currently tracked markets: {_market_desc()}"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Market region to query. Currently tracked: {_market_desc()}",
-                    },
-                    "p_days": {
-                        "type": "integer",
-                        "description": "Lookback window in days (default 7, max 30). Use 1 for 'last 24h', 3 for 'last few days', 7 for 'last week'.",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Max example properties in response (default 5, max 5 — kept small to avoid token bloat).",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_spike_alerts",
-            "description": "Fetch sudden sharp price changes and 25%+ price spikes, sorted by deviation intensity. Supports ranked slices (top, bottom, middle).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "threshold_param": {
-                        "type": "number",
-                        "description": "Percentage spike deviation threshold (default 25.0)",
-                    },
-                    "days_param": {
-                        "type": "integer",
-                        "description": "Historical days lookback (default 7, max 30)",
-                    },
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Max spikes to return (default 8, max 15)",
-                    },
-                    "p_rank_position": {
-                        "type": "string",
-                        "enum": ["top", "bottom", "middle"],
-                        "description": "Rank slice: 'top' (most extreme spikes), 'bottom' (mildest spikes), or 'middle' (median spikes). Default 'top'.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_rate_anomaly_report",
-            "description": "Fetch a deep-dive anomaly report for a specific property: historical normal price bounds, baseline average, anomaly frequency, and recent abnormal pricing spikes.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_property_search": {
-                        "type": "string",
-                        "description": "Property UUID or search term matching property name",
-                    },
-                    "p_days": {
-                        "type": "integer",
-                        "description": "Analysis window in days (default 30, max 90)",
-                    },
-                    "p_deviation_threshold": {
-                        "type": "number",
-                        "description": "Percentage threshold defining an anomaly (default 25.0)",
-                    },
-                },
-                "required": ["p_property_search"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_most_volatile_properties",
-            "description": "Identify property listings with the highest price volatility and most frequent rate adjustments. Supports ranked slices.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
-                    },
-                    "p_days": {
-                        "type": "integer",
-                        "description": "Lookback window in days (default 14, max 90)",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Max properties to return (default 5, max 15)",
-                    },
-                    "p_rank_position": {
-                        "type": "string",
-                        "enum": ["top", "bottom", "middle"],
-                        "description": "Rank slice: 'top' (highest volatility), 'bottom' (lowest volatility), or 'middle' (median). Default 'top'.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-
-    # ── INDIVIDUAL PROPERTY & LISTING LEVEL ──
-    {
-        "type": "function",
-        "function": {
-            "name": "get_property_snapshot",
-            "description": "Fetch complete current profile and latest rate data for a specific property by its UUID or listing title. Returns property name, market, bedrooms, platform, listing URL, coordinates, current nightly rate, 7-day average baseline, is_active, and availability status.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_property_search": {
-                        "type": "string",
-                        "description": "Property UUID or search term for listing name",
-                    }
-                },
-                "required": ["p_property_search"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_property_detail",
-            "description": "Fetch a deep single-property profile including current status, active tracking state, coordinates, listing URL, and daily-aggregated recent rate history (up to 14 days). Use when user asks to explore or dive deep into a specific property.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_property_search": {
-                        "type": "string",
-                        "description": "Property UUID or search term for listing name",
-                    },
-                    "p_history_days": {
-                        "type": "integer",
-                        "description": "Number of days of daily rate history to include (default 14, max 30)",
-                    },
-                },
-                "required": ["p_property_search"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_property_rate_changes",
-            "description": "Fetch chronological daily history of rate revisions and price adjustments for a specific property. Returns one row per calendar day.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "property_search": {
-                        "type": "string",
-                        "description": "Property UUID or listing title search term",
-                    },
-                    "days_param": {
-                        "type": "integer",
-                        "description": "Lookback window in days (default 14, max 90)",
-                    },
-                    "compare_window_days": {
-                        "type": "integer",
-                        "description": "Comparison interval in days (default 1)",
-                    },
-                    "start_date": {
-                        "type": "string",
-                        "description": "Optional stay date start window (YYYY-MM-DD)",
-                    },
-                    "end_date": {
-                        "type": "string",
-                        "description": "Optional stay date end window (YYYY-MM-DD)",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Max daily entries to return (default 14, max 30)",
-                    },
-                },
-                "required": ["property_search"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "compare_properties",
-            "description": "Compare 2 to 10 specific properties side-by-side on current rate, 7-day average, bedroom count, platform, is_active, and availability status. Use when the user asks to compare specific listings.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_property_ids": {
-                        "type": "array",
-                        "items": {"type": "string"},
-                        "description": "List of 2 to 10 property UUIDs or names to compare",
-                    }
-                },
-                "required": ["p_property_ids"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "search_properties",
-            "description": f"Search and filter tracked properties by market (any tracked region), bedroom count, platform ('airbnb' or 'vrbo'), availability status, title substring, and ranked slices. Currently tracked markets: {_market_desc()}",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_search": {
-                        "type": "string",
-                        "description": "Optional search term to match listing title, address, or neighborhood",
-                    },
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
-                    },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional platform ('airbnb' or 'vrbo')",
-                    },
-                    "p_bedrooms": {
-                        "type": "integer",
-                        "description": "Optional bedroom count filter (e.g. 1, 2, 3)",
-                    },
-                    "p_available": {
-                        "type": "boolean",
-                        "description": "Optional availability filter: true for currently available, false for booked",
-                    },
-                    "p_is_active": {
-                        "type": "boolean",
-                        "description": "Optional active status filter (default true for currently tracked)",
-                    },
-                    "p_rank_position": {
-                        "type": "string",
-                        "enum": ["top", "bottom", "middle"],
-                        "description": "Rank slice: 'top', 'bottom', or 'middle' (default 'top')",
-                    },
-                    "p_sort_by": {
-                        "type": "string",
-                        "enum": ["rate", "deviation"],
-                        "description": "Sort metric: 'rate' (by nightly price) or 'deviation' (by % deviation from 7d avg). Default 'rate'.",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Max results to return (default 6, max 15). Keep small for conversational conciseness.",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_availability_rate",
-            "description": f"Fetch availability percentage and booked vs available listing counts for a market or platform. Use when user asks about occupancy rates, calendar status, or vacancy in any tracked market.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_market": {
-                        "type": "string",
-                        "description": f"Optional market filter. Currently tracked: {_market_desc()}",
-                    },
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional platform filter ('airbnb' or 'vrbo')",
-                    },
-                },
-                "required": [],
-            },
-        },
-    },
-
-    # ── GEOSPATIAL & LOCATION TOOLS ──
-    {
-        "type": "function",
-        "function": {
-            "name": "geocode_address",
-            "description": "Convert a user-provided street address, neighborhood, landmark, or point of interest into precise latitude and longitude geographic coordinates.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "address": {
-                        "type": "string",
-                        "description": "The street address, neighborhood, landmark, or point of interest to geocode",
-                    }
-                },
-                "required": ["address"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_nearby_properties",
-            "description": "Find tracked property listings within a radial kilometer distance of a geographic latitude and longitude point. Always call geocode_address first if user gave a street address or neighborhood name.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_latitude": {
-                        "type": "number",
-                        "description": "Target center latitude coordinate",
-                    },
-                    "p_longitude": {
-                        "type": "number",
-                        "description": "Target center longitude coordinate",
-                    },
-                    "p_radius_km": {
-                        "type": "number",
-                        "description": "Search radius in kilometers (default 5.0, max 20.0)",
-                    },
-                    "p_limit": {
-                        "type": "integer",
-                        "description": "Maximum properties to return (default 6, max 15)",
-                    },
-                },
-                "required": ["p_latitude", "p_longitude"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_distance_km",
-            "description": "Calculate exact straight-line distance in kilometers between two properties using their database UUIDs.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "property_a_id": {
-                        "type": "string",
-                        "description": "UUID of the first property",
-                    },
-                    "property_b_id": {
-                        "type": "string",
-                        "description": "UUID of the second property",
-                    },
-                },
-                "required": ["property_a_id", "property_b_id"],
-            },
-        },
-    },
-
-    # ── REGIONAL & METADATA ──
-    {
-        "type": "function",
-        "function": {
-            "name": "get_tracked_markets",
-            "description": f"Fetch a list of all active metropolitan real estate markets currently tracked by the system, with property counts per market. Currently includes: {_market_desc()}.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_platform": {
-                        "type": "string",
-                        "description": "Optional booking platform filter ('airbnb' or 'vrbo')",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "get_recently_changed_tracking",
-            "description": "Fetch listings that were recently added to or removed from active monitoring tracking status within a lookback period.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "p_days": {
-                        "type": "integer",
-                        "description": "Lookback window in days (default 30, max 90)",
-                    }
-                },
-                "required": [],
-            },
-        },
-    },
-    GENERATE_DATA_EXPORT_TOOL,
-]
-
-COMMERCIAL_TOOLS = [
+from services.tool_schemas import (
+    COMMERCIAL_TOOLS,
     GENERATE_CONTACT_BUTTONS_TOOL,
+    GENERATE_DATA_EXPORT_TOOL,
+    REAL_ESTATE_TOOLS,
     SUGGEST_ACTIONS_TOOL,
+)
+
+__all__ = [
+    "REAL_ESTATE_TOOLS",
+    "COMMERCIAL_TOOLS",
+    "SUGGEST_ACTIONS_TOOL",
+    "GENERATE_DATA_EXPORT_TOOL",
+    "GENERATE_CONTACT_BUTTONS_TOOL",
+    "TOOL_REGISTRY",
+    "discover_tools",
+    "select_tools",
+    "invalidate_tool_embeddings",
 ]
-
-
-# ── 3. TOOL REGISTRY & DISCOVERY METADATA ──
-
 TOOL_REGISTRY: List[Dict[str, Any]] = [
     {
         "name": "get_real_estate_kpis",
@@ -735,9 +148,6 @@ TOOL_REGISTRY: List[Dict[str, Any]] = [
     },
 ]
 
-
-# ── 4. SEMANTIC EMBEDDING ENGINE (Lazy Loaded Singleton) ──
-
 _TOOL_EMBEDDINGS: Optional[np.ndarray] = None
 
 
@@ -752,65 +162,49 @@ def _get_tool_embeddings() -> np.ndarray:
     return _TOOL_EMBEDDINGS
 
 
-def discover_tools(
+def _filter_candidate_indices(categories: Optional[List[str]]) -> List[int]:
+    """Filter tool registry indices by category gating if categories specified."""
+    if not categories:
+        return list(range(len(TOOL_REGISTRY)))
+
+    allowed_cats = {c.upper() for c in categories}
+    candidates: List[int] = []
+    for i, entry in enumerate(TOOL_REGISTRY):
+        entry_cats = entry.get("categories")
+        if entry_cats:
+            if any(c.upper() in allowed_cats for c in entry_cats):
+                candidates.append(i)
+        elif entry.get("category", "").upper() in allowed_cats:
+            candidates.append(i)
+
+    return candidates or list(range(len(TOOL_REGISTRY)))
+
+
+def _rank_candidate_tools(
+    embed_model: Any,
+    tool_vectors: np.ndarray,
+    candidate_indices: List[int],
     user_query: str,
-    categories: Optional[List[str]] = None,
-    top_k: int = 4,
-    include_export: bool = True,
+    top_k: int,
 ) -> List[Dict[str, Any]]:
-    """
-    Hierarchical Dynamic Tool Discovery:
-      1. Embed user_query using local embedding model (~20ms).
-      2. Filter candidate pool by categories if category gating is active.
-      3. Compute cosine similarity against candidate tool retrieval descriptions.
-      4. Select Top-K most relevant tools.
-      5. Attach Universal Tools (suggest_actions, generate_data_export).
-
-    Guarantees strictly 4 to 6 tools (~600 tokens total) are exposed to the LLM.
-    """
-    try:
-        from services.embedding_service import get_embedding_model
-        embed_model = get_embedding_model()
-        tool_vectors = _get_tool_embeddings()
-
-        # Category gating
-        if categories:
-            allowed_cats = {c.upper() for c in categories}
-            candidate_indices = []
-            for i, entry in enumerate(TOOL_REGISTRY):
-                entry_cats = entry.get("categories")
-                if entry_cats:
-                    if any(c.upper() in allowed_cats for c in entry_cats):
-                        candidate_indices.append(i)
-                elif entry.get("category", "").upper() in allowed_cats:
-                    candidate_indices.append(i)
-        else:
-            candidate_indices = list(range(len(TOOL_REGISTRY)))
-
-        if not candidate_indices:
-            candidate_indices = list(range(len(TOOL_REGISTRY)))
+    """Rank candidate tools by vector similarity against the user query."""
+    q_vec = embed_model.encode([user_query], normalize_embeddings=True)[0]
+    candidate_vecs = tool_vectors[candidate_indices]
+    sims = candidate_vecs @ q_vec
+    ranked_local_indices = np.argsort(sims)[::-1][:top_k]
+    return [
+        TOOL_REGISTRY[candidate_indices[local_idx]]["schema"]
+        for local_idx in ranked_local_indices
+    ]
 
 
-        q_vec = embed_model.encode([user_query], normalize_embeddings=True)[0]
-        candidate_vecs = tool_vectors[candidate_indices]
-        sims = candidate_vecs @ q_vec
-
-        # Rank candidates
-        ranked_local_indices = np.argsort(sims)[::-1][:top_k]
-        selected_tools = [
-            TOOL_REGISTRY[candidate_indices[local_idx]]["schema"]
-            for local_idx in ranked_local_indices
-        ]
-    except Exception:
-        # Fallback to default market tools if embedding fails
-        selected_tools = [
-            t for t in REAL_ESTATE_TOOLS
-            if t["function"]["name"] in ("get_market_averages", "get_market_snapshot", "get_spike_alerts")
-        ]
-
-    # Universal tools: suggest_actions (always) and generate_data_export (optional)
-    results = []
-    seen_names = set()
+def _attach_universal_tools(
+    selected_tools: List[Dict[str, Any]],
+    include_export: bool,
+) -> List[Dict[str, Any]]:
+    """Deduplicate tools and append universal export tool if requested."""
+    results: List[Dict[str, Any]] = []
+    seen_names: set[str] = set()
 
     for tool in selected_tools:
         name = tool["function"]["name"]
@@ -820,18 +214,39 @@ def discover_tools(
 
     if include_export and "generate_data_export" not in seen_names:
         results.append(GENERATE_DATA_EXPORT_TOOL)
-        seen_names.add("generate_data_export")
 
     return results
 
 
+def discover_tools(
+    user_query: str,
+    categories: Optional[List[str]] = None,
+    top_k: int = 4,
+    include_export: bool = True,
+) -> List[Dict[str, Any]]:
+    """Hierarchical dynamic tool discovery ranking top-K tools for user query."""
+    try:
+        from services.embedding_service import get_embedding_model
+        embed_model = get_embedding_model()
+        tool_vectors = _get_tool_embeddings()
+        candidate_indices = _filter_candidate_indices(categories)
+        selected_tools = _rank_candidate_tools(
+            embed_model, tool_vectors, candidate_indices, user_query, top_k
+        )
+    except Exception:
+        selected_tools = [
+            t for t in REAL_ESTATE_TOOLS
+            if t["function"]["name"] in ("get_market_averages", "get_market_snapshot", "get_spike_alerts")
+        ]
+
+    return _attach_universal_tools(selected_tools, include_export)
+
+
 def invalidate_tool_embeddings() -> None:
-    """Public API to reset the tool embedding cache (e.g. called after market registry refresh)."""
+    """Reset the tool embedding cache upon market registry refreshes."""
     global _TOOL_EMBEDDINGS
     _TOOL_EMBEDDINGS = None
 
-
-# ── 5. BACKWARDS COMPATIBLE SELECTOR ──
 
 def select_tools(user_query: str) -> List[Dict[str, Any]]:
     """Backwards-compatible alias forwarding to discover_tools()."""

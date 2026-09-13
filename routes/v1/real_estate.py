@@ -27,8 +27,6 @@ router = APIRouter(
 )
 
 
-# ── Request / Response models ──────────────────────────────────────────────────
-
 class ChatRequest(BaseModel):
     message:    str                         = Field(..., min_length=1, max_length=2000)
     session_id: str                         = Field(..., min_length=1, max_length=128)
@@ -52,9 +50,8 @@ class ErrorResponse(BaseModel):
     error: ErrorDetail
 
 
-# ── Error helper ───────────────────────────────────────────────────────────────
-
 def _error(code: str, message: str, retryable: bool, http_status: int) -> JSONResponse:
+    """Formats standardized JSON error response."""
     return JSONResponse(
         status_code=http_status,
         content={"error": {"code": code, "message": message, "retryable": retryable}},
@@ -67,14 +64,10 @@ def _sse_error_stream(code: str, message: str):
     yield f"event: error\ndata: {payload}\n\n"
 
 
-# ── Rate limit helper ──────────────────────────────────────────────────────────
-
 def _check_rate_limit(client_key: str):
     """Raises HTTPException(429) via the limiter if limit exceeded."""
     limiter.check_rate_limit(client_key)
 
-
-# ─── Route 1: Non-streaming JSON (backwards compatible) ───────────────────────
 
 @router.post(
     "/chat",
@@ -88,6 +81,7 @@ def _check_rate_limit(client_key: str):
     summary="Send a message to the Real Estate Intelligence Assistant (non-streaming)",
 )
 async def handle_real_estate_chat(payload: ChatRequest, request: Request):
+    """Handles non-streaming conversational turns for backward compatibility."""
     client_key = payload.session_id or request.client.host
     try:
         _check_rate_limit(client_key)
@@ -116,8 +110,6 @@ async def handle_real_estate_chat(payload: ChatRequest, request: Request):
         return _handle_exception(exc, payload.session_id)
 
 
-# ─── Route 2: SSE Streaming ───────────────────────────────────────────────────
-
 @router.post(
     "/chat/stream",
     summary="Send a message to Pulse AI — receives Server-Sent Events stream",
@@ -131,29 +123,7 @@ async def handle_real_estate_chat(payload: ChatRequest, request: Request):
     },
 )
 async def handle_real_estate_chat_stream(payload: ChatRequest, request: Request):
-    """
-    SSE stream endpoint.
-
-    The frontend connects with:
-        const evtSource = new EventSource(...)  // OR via fetch with ReadableStream
-        POST /api/v1/real-estate/chat/stream
-
-    Event stream format:
-        event: status
-        data: {"type":"status","classification":"PATH_A"}
-
-        event: tool_call
-        data: {"type":"tool_call","tool":"get_market_averages","args":{"p_market":"Miami"}}
-
-        event: token
-        data: {"type":"token","token":"## Miami Market\\n"}
-
-        event: done
-        data: {"type":"done","path_used":"PATH_A","tools_called":[...],"suggested_actions":[]}
-
-        event: error
-        data: {"type":"error","code":"RATE_LIMIT_EXCEEDED","message":"..."}
-    """
+    """SSE streaming endpoint providing status, tool calls, and text tokens."""
     client_key = payload.session_id or request.client.host
     try:
         _check_rate_limit(client_key)
@@ -175,15 +145,8 @@ async def handle_real_estate_chat_stream(payload: ChatRequest, request: Request)
                 event_type = event.get("type", "token")
                 data = json.dumps(event)
 
-                # Map type -> SSE event name for frontend selectivity
-                if event_type == "status":
-                    yield f"event: status\ndata: {data}\n\n"
-                elif event_type == "tool_call":
-                    yield f"event: tool_call\ndata: {data}\n\n"
-                elif event_type == "token":
-                    yield f"event: token\ndata: {data}\n\n"
-                elif event_type == "done":
-                    yield f"event: done\ndata: {data}\n\n"
+                if event_type in ("status", "tool_call", "token", "done"):
+                    yield f"event: {event_type}\ndata: {data}\n\n"
                 else:
                     yield f"event: {event_type}\ndata: {data}\n\n"
 
@@ -200,20 +163,19 @@ async def handle_real_estate_chat_stream(payload: ChatRequest, request: Request)
         event_generator(),
         media_type="text/event-stream",
         headers={
-            "Cache-Control":  "no-cache",
-            "X-Accel-Buffering": "no",   # Disable Nginx buffering for HuggingFace Spaces
-            "Connection":     "keep-alive",
+            "Cache-Control": "no-cache",
+            "X-Accel-Buffering": "no",
+            "Connection": "keep-alive",
         },
     )
 
-
-# ─── Route 3: Starter prompts ─────────────────────────────────────────────────
 
 @router.get(
     "/chat/starters",
     summary="Return suggested starter prompts for the chat UI",
 )
 async def get_starter_prompts():
+    """Returns curated starter prompts for initial user suggestions."""
     return {
         "starters": [
             "What markets are you currently tracking?",
@@ -227,9 +189,8 @@ async def get_starter_prompts():
     }
 
 
-# ─── Exception handler (shared) ───────────────────────────────────────────────
-
 def _handle_exception(exc: Exception, session_id: str) -> JSONResponse:
+    """Classifies runtime exceptions and maps to structured error responses."""
     err_str = str(exc).lower()
 
     if is_structural_error(exc):

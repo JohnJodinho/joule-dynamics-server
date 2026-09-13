@@ -8,18 +8,28 @@ from config import SUPABASE_URL, SUPABASE_KEY
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 embedder = get_embedding_model()
 
-# Tools handled entirely in Python — never routed to Supabase
 _PYTHON_SIDE_TOOLS = {"generate_data_export", "geocode_address", "suggest_actions", "generate_contact_buttons"}
+_VALID_POSITIONS = {"top", "bottom", "middle"}
 
 
-def is_valid_uuid(val):
+def is_valid_uuid(val) -> bool:
+    """Validates whether a value is a valid UUID string."""
     if not isinstance(val, str):
         return False
     return bool(re.match(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', val.lower()))
 
 
+def _first_val(d: dict, *keys, default=None):
+    """Returns the first non-empty, non-None value among keys in dict d, or default."""
+    for k in keys:
+        val = d.get(k)
+        if val is not None and val != "":
+            return val
+    return default
+
+
 def _clamp(value, lo, hi, default=None):
-    """Clamps an integer param. Returns default if value is None."""
+    """Clamps an integer parameter to [lo, hi]. Returns default on missing or invalid value."""
     if value is None:
         return default
     try:
@@ -28,255 +38,277 @@ def _clamp(value, lo, hi, default=None):
         return default
 
 
-async def execute_tool_rpc(func_name: str, args: dict) -> dict:
-    """Executes a read-only Supabase RPC matching the tool schema.
+def _norm_rank_pos(pos) -> str:
+    """Normalizes rank position to 'top', 'bottom', or 'middle'."""
+    pos_str = str(pos or "top").lower()
+    return pos_str if pos_str in _VALID_POSITIONS else "top"
 
-    All parameter normalization, clamping, and validation is applied here.
-    Constructs clean keyword arguments matching the exact Postgres DDL signatures
-    in pulse_ai_revamped_rpcs.sql to prevent PostgREST schema lookup errors.
-    """
-    if func_name in _PYTHON_SIDE_TOOLS:
-        return {
-            "status": "error",
-            "message": f"Tool '{func_name}' is handled client-side and must not route to Supabase."
-        }
 
-    clean_args: dict = {}
+def _norm_kpis(args: dict) -> dict:
+    """Normalizes parameters for get_real_estate_kpis."""
+    bedrooms = _first_val(args, "p_bedrooms", "bedrooms")
+    return {
+        "p_market": _first_val(args, "p_market", "market"),
+        "p_platform": _first_val(args, "p_platform", "platform"),
+        "p_bedrooms": int(bedrooms) if bedrooms is not None else None,
+        "p_is_active": args.get("p_is_active") if "p_is_active" in args else True,
+        "p_property_ids": _first_val(args, "p_property_ids", "property_ids"),
+        "p_start_date": _first_val(args, "p_start_date", "start_date"),
+        "p_end_date": _first_val(args, "p_end_date", "end_date"),
+    }
 
-    # ── 1. get_real_estate_kpis (and legacy get_dashboard_kpis) ──
-    if func_name in ("get_real_estate_kpis", "get_dashboard_kpis"):
-        clean_args = {
-            "p_market": args.get("p_market") or args.get("market"),
-            "p_platform": args.get("p_platform") or args.get("platform"),
-            "p_bedrooms": int(args["p_bedrooms"]) if args.get("p_bedrooms") is not None else None,
-            "p_is_active": args.get("p_is_active") if "p_is_active" in args else True,
-            "p_property_ids": args.get("p_property_ids") or args.get("property_ids"),
-            "p_start_date": args.get("p_start_date") or args.get("start_date"),
-            "p_end_date": args.get("p_end_date") or args.get("end_date"),
-        }
 
-    # ── 2. get_market_averages ──
-    elif func_name == "get_market_averages":
-        market = args.get("market_param") or args.get("p_market") or args.get("market")
-        if market:
-            clean_args["market_param"] = str(market)
+def _norm_market_averages(args: dict) -> dict:
+    """Normalizes parameters for get_market_averages."""
+    market = _first_val(args, "market_param", "p_market", "market")
+    return {"market_param": str(market)} if market else {}
 
-    # ── 3. get_market_snapshot ──
-    elif func_name == "get_market_snapshot":
-        market = args.get("p_market") or args.get("market")
-        if not market:
-            return {"status": "error", "message": "p_market is required for get_market_snapshot. Call get_tracked_markets to see available markets."}
-        start = args.get("p_start_date") or args.get("start_date")
-        end = args.get("p_end_date") or args.get("end_date")
-        if not start or not end:
-            return {"status": "error", "message": "get_market_snapshot requires both p_start_date and p_end_date."}
-        try:
-            d1 = dt_date.fromisoformat(start)
-            d2 = dt_date.fromisoformat(end)
-            if d2 < d1:
-                return {"status": "error", "message": "p_end_date must be after p_start_date."}
-            if (d2 - d1).days > 90:
-                return {"status": "error", "message": "Date range cannot exceed 90 days for get_market_snapshot."}
-        except ValueError:
-            return {"status": "error", "message": "Invalid date format. Use YYYY-MM-DD for p_start_date and p_end_date."}
-        clean_args = {
-            "p_market": market,
-            "p_start_date": start,
-            "p_end_date": end,
-        }
 
-    # ── 4. get_market_trend ──
-    elif func_name == "get_market_trend":
-        market = args.get("p_market") or args.get("market")
-        if not market:
-            return {"status": "error", "message": "p_market is required for get_market_trend. Call get_tracked_markets to see available markets."}
-        days = _clamp(args.get("p_days") or args.get("days"), 7, 90, default=14)
-        plat = args.get("p_platform") or args.get("platform")
-        is_act = args.get("p_is_active") if "p_is_active" in args else True
-        clean_args = {
-            "p_market": market,
-            "p_days": days,
-            "p_platform": str(plat) if plat else None,
-            "p_is_active": bool(is_act),
-        }
-
-    # ── 5. get_spike_alerts ──
-    elif func_name == "get_spike_alerts":
-        thresh = args.get("threshold_param") or args.get("p_threshold") or args.get("threshold") or 25.0
-        days = _clamp(args.get("days_param") or args.get("p_days") or args.get("days"), 1, 30, default=7)
-        market = args.get("p_market") or args.get("market")
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 15, default=8)
-        pos = args.get("p_rank_position") or args.get("rank_position") or "top"
-        pos = str(pos).lower() if str(pos).lower() in ("top", "bottom", "middle") else "top"
-        clean_args = {
-            "threshold_param": max(5.0, min(float(thresh), 100.0)),
-            "days_param": days,
-            "p_market": str(market) if market else None,
-            "p_limit": limit,
-            "p_rank_position": pos,
-        }
-
-    # ── 6. get_rate_anomaly_report ──
-    elif func_name == "get_rate_anomaly_report":
-        search = args.get("p_property_search") or args.get("p_search") or args.get("p_market") or args.get("property_search") or ""
-        days = _clamp(args.get("p_days") or args.get("days"), 1, 90, default=30)
-        dev = args.get("p_deviation_threshold") or args.get("p_threshold") or args.get("deviation_threshold") or 25.0
-        clean_args = {
-            "p_property_search": str(search) if search else None,
-            "p_days": days,
-            "p_deviation_threshold": max(5.0, min(float(dev), 100.0)),
-        }
-
-    # ── 7. get_most_volatile_properties ──
-    elif func_name == "get_most_volatile_properties":
-        market = args.get("p_market") or args.get("market")
-        days = _clamp(args.get("p_days") or args.get("days"), 7, 90, default=14)
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 15, default=5)
-        pos = args.get("p_rank_position") or args.get("rank_position") or "top"
-        pos = str(pos).lower() if str(pos).lower() in ("top", "bottom", "middle") else "top"
-        clean_args = {
-            "p_market": market,
-            "p_days": days,
-            "p_limit": limit,
-            "p_rank_position": pos,
-        }
-
-    # ── 8. get_property_snapshot ──
-    elif func_name == "get_property_snapshot":
-        search = args.get("p_property_search") or args.get("p_property_id") or args.get("property_search") or args.get("property_id")
-        if not search:
-            return {"status": "error", "message": "get_property_snapshot requires p_property_search (UUID or property title)."}
-        clean_args = {"p_property_search": str(search)}
-
-    # ── 9. get_property_rate_changes ──
-    elif func_name == "get_property_rate_changes":
-        search = args.get("property_search") or args.get("p_property_search") or args.get("p_property_id") or args.get("property_id") or args.get("p_market") or ""
-        start = args.get("start_date") or args.get("p_start_date")
-        end = args.get("end_date") or args.get("p_end_date")
-        days = _clamp(args.get("days_param") or args.get("p_days") or args.get("days"), 1, 90, default=14)
-        comp = _clamp(args.get("compare_window_days"), 1, 14, default=1)
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 30, default=14)
-        clean_args = {
-            "property_search": str(search),
-            "days_param": days,
-            "compare_window_days": comp,
-            "start_date": start,
-            "end_date": end,
-            "p_limit": limit,
-        }
-
-    # ── 10. compare_properties ──
-    elif func_name == "compare_properties":
-        ids = args.get("p_property_ids") or args.get("property_ids") or []
-        if not isinstance(ids, list) or len(ids) < 2:
-            return {"status": "error", "message": "compare_properties requires a list of 2-10 property names or UUIDs in p_property_ids."}
-        clean_args = {"p_property_ids": ids[:10]}
-
-    # ── 11. search_properties ──
-    elif func_name == "search_properties":
-        search = args.get("p_search") or args.get("p_query") or args.get("query")
-        market = args.get("p_market") or args.get("market")
-        platform = args.get("p_platform") or args.get("platform")
-        bedrooms = args.get("p_bedrooms") or args.get("bedrooms")
-        avail = args.get("p_available") if "p_available" in args else args.get("available")
-        is_act = args.get("p_is_active") if "p_is_active" in args else True
-        pos = args.get("p_rank_position") or args.get("rank_position") or "top"
-        pos = str(pos).lower() if str(pos).lower() in ("top", "bottom", "middle") else "top"
-        sort_by = args.get("p_sort_by") or args.get("sort_by") or "rate"
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 20, default=6)
-        clean_args = {
-            "p_search": str(search) if search else None,
-            "p_market": str(market) if market else None,
-            "p_platform": str(platform) if platform else None,
-            "p_bedrooms": int(bedrooms) if bedrooms is not None else None,
-            "p_available": bool(avail) if avail is not None else None,
-            "p_is_active": bool(is_act) if is_act is not None else None,
-            "p_rank_position": pos,
-            "p_sort_by": str(sort_by),
-            "p_limit": limit,
-        }
-
-    # ── 12. get_availability_rate ──
-    elif func_name == "get_availability_rate":
-        market = args.get("p_market") or args.get("market")
-        platform = args.get("p_platform") or args.get("platform")
-        clean_args = {
-            "p_market": str(market) if market else None,
-            "p_platform": str(platform) if platform else None,
-        }
-
-    # ── 13. get_nearby_properties ──
-    elif func_name == "get_nearby_properties":
-        lat = args.get("p_latitude") or args.get("latitude")
-        lon = args.get("p_longitude") or args.get("longitude")
-        if lat is None or lon is None:
-            return {
-                "status": "error",
-                "message": "get_nearby_properties requires p_latitude and p_longitude. Call geocode_address first if you only have an address."
-            }
-        rad = max(0.1, min(float(args.get("p_radius_km") or args.get("radius_km") or 5.0), 20.0))
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 20, default=6)
-        clean_args = {
-            "p_latitude": float(lat),
-            "p_longitude": float(lon),
-            "p_radius_km": rad,
-            "p_limit": limit,
-        }
-
-    # ── 14. get_distance_km ──
-    elif func_name == "get_distance_km":
-        p_a = args.get("property_a_id") or args.get("p_from_property_id") or args.get("from_property_id")
-        p_b = args.get("property_b_id") or args.get("p_to_property_id") or args.get("to_property_id")
-        if not is_valid_uuid(p_a) or not is_valid_uuid(p_b):
-            return {"status": "error", "message": "Invalid UUID format. Both property IDs must be valid UUIDs."}
-        clean_args = {
-            "property_a_id": p_a,
-            "property_b_id": p_b,
-        }
-
-    # ── 15. get_tracked_markets ──
-    elif func_name == "get_tracked_markets":
-        plat = args.get("p_platform") or args.get("platform")
-        clean_args = {
-            "p_platform": str(plat) if plat else None,
-        }
-
-    # ── 16. get_recently_changed_tracking ──
-    elif func_name == "get_recently_changed_tracking":
-        days = _clamp(args.get("p_days") or args.get("days"), 1, 90, default=30)
-        clean_args = {"p_days": days}
-
-    # ── 17. get_property_detail ──
-    elif func_name == "get_property_detail":
-        search = args.get("p_property_search") or args.get("property_search") or args.get("property_id") or args.get("name")
-        if not search:
-            return {"status": "error", "message": "get_property_detail requires p_property_search (UUID or property title)."}
-        days = _clamp(args.get("p_history_days") or args.get("history_days") or args.get("days"), 1, 30, default=14)
-        clean_args = {
-            "p_property_search": str(search),
-            "p_history_days": days,
-        }
-
-    # ── get_market_rate_changes ──
-    elif func_name == "get_market_rate_changes":
-        market = args.get("p_market") or args.get("market")
-        days = _clamp(args.get("p_days") or args.get("days"), 1, 30, default=7)
-        # Hard cap at 5 — examples array must stay tiny to avoid token bloat
-        limit = _clamp(args.get("p_limit") or args.get("limit"), 1, 5, default=5)
-        clean_args = {
-            "p_market": str(market) if market else None,
-            "p_days": days,
-            "p_limit": limit,
-        }
-
-    else:
-        return {
-            "status": "error",
-            "message": f"Unknown tool name: '{func_name}'"
-        }
-
+def _norm_market_snapshot(args: dict) -> dict:
+    """Normalizes parameters for get_market_snapshot with date range validation."""
+    market = _first_val(args, "p_market", "market")
+    if not market:
+        return {"status": "error", "message": "p_market is required for get_market_snapshot. Call get_tracked_markets to see available markets."}
+    start = _first_val(args, "p_start_date", "start_date")
+    end = _first_val(args, "p_end_date", "end_date")
+    if not start or not end:
+        return {"status": "error", "message": "get_market_snapshot requires both p_start_date and p_end_date."}
     try:
-        # Strip None values to allow Postgres DEFAULT expressions to resolve cleanly
+        d1 = dt_date.fromisoformat(start)
+        d2 = dt_date.fromisoformat(end)
+        if d2 < d1:
+            return {"status": "error", "message": "p_end_date must be after p_start_date."}
+        if (d2 - d1).days > 90:
+            return {"status": "error", "message": "Date range cannot exceed 90 days for get_market_snapshot."}
+    except ValueError:
+        return {"status": "error", "message": "Invalid date format. Use YYYY-MM-DD for p_start_date and p_end_date."}
+    return {
+        "p_market": market,
+        "p_start_date": start,
+        "p_end_date": end,
+    }
+
+
+def _norm_market_trend(args: dict) -> dict:
+    """Normalizes parameters for get_market_trend."""
+    market = _first_val(args, "p_market", "market")
+    if not market:
+        return {"status": "error", "message": "p_market is required for get_market_trend. Call get_tracked_markets to see available markets."}
+    days = _clamp(_first_val(args, "p_days", "days"), 7, 90, default=14)
+    plat = _first_val(args, "p_platform", "platform")
+    is_act = args.get("p_is_active") if "p_is_active" in args else True
+    return {
+        "p_market": market,
+        "p_days": days,
+        "p_platform": str(plat) if plat else None,
+        "p_is_active": bool(is_act),
+    }
+
+
+def _norm_spike_alerts(args: dict) -> dict:
+    """Normalizes parameters for get_spike_alerts."""
+    thresh = float(_first_val(args, "threshold_param", "p_threshold", "threshold", default=25.0))
+    days = _clamp(_first_val(args, "days_param", "p_days", "days"), 1, 30, default=7)
+    market = _first_val(args, "p_market", "market")
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 15, default=8)
+    pos = _norm_rank_pos(_first_val(args, "p_rank_position", "rank_position"))
+    return {
+        "threshold_param": max(5.0, min(thresh, 100.0)),
+        "days_param": days,
+        "p_market": str(market) if market else None,
+        "p_limit": limit,
+        "p_rank_position": pos,
+    }
+
+
+def _norm_rate_anomaly_report(args: dict) -> dict:
+    """Normalizes parameters for get_rate_anomaly_report."""
+    search = _first_val(args, "p_property_search", "p_search", "p_market", "property_search")
+    days = _clamp(_first_val(args, "p_days", "days"), 1, 90, default=30)
+    dev = float(_first_val(args, "p_deviation_threshold", "p_threshold", "deviation_threshold", default=25.0))
+    return {
+        "p_property_search": str(search) if search else None,
+        "p_days": days,
+        "p_deviation_threshold": max(5.0, min(dev, 100.0)),
+    }
+
+
+def _norm_most_volatile_properties(args: dict) -> dict:
+    """Normalizes parameters for get_most_volatile_properties."""
+    market = _first_val(args, "p_market", "market")
+    days = _clamp(_first_val(args, "p_days", "days"), 7, 90, default=14)
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 15, default=5)
+    pos = _norm_rank_pos(_first_val(args, "p_rank_position", "rank_position"))
+    return {
+        "p_market": market,
+        "p_days": days,
+        "p_limit": limit,
+        "p_rank_position": pos,
+    }
+
+
+def _norm_property_snapshot(args: dict) -> dict:
+    """Normalizes parameters for get_property_snapshot."""
+    search = _first_val(args, "p_property_search", "p_property_id", "property_search", "property_id")
+    if not search:
+        return {"status": "error", "message": "get_property_snapshot requires p_property_search (UUID or property title)."}
+    return {"p_property_search": str(search)}
+
+
+def _norm_property_rate_changes(args: dict) -> dict:
+    """Normalizes parameters for get_property_rate_changes."""
+    search = _first_val(args, "property_search", "p_property_search", "p_property_id", "property_id", "p_market", default="")
+    start = _first_val(args, "start_date", "p_start_date")
+    end = _first_val(args, "end_date", "p_end_date")
+    days = _clamp(_first_val(args, "days_param", "p_days", "days"), 1, 90, default=14)
+    comp = _clamp(args.get("compare_window_days"), 1, 14, default=1)
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 30, default=14)
+    return {
+        "property_search": str(search),
+        "days_param": days,
+        "compare_window_days": comp,
+        "start_date": start,
+        "end_date": end,
+        "p_limit": limit,
+    }
+
+
+def _norm_compare_properties(args: dict) -> dict:
+    """Normalizes parameters for compare_properties."""
+    ids = _first_val(args, "p_property_ids", "property_ids", default=[])
+    if not isinstance(ids, list) or len(ids) < 2:
+        return {"status": "error", "message": "compare_properties requires a list of 2-10 property names or UUIDs in p_property_ids."}
+    return {"p_property_ids": ids[:10]}
+
+
+def _norm_search_properties(args: dict) -> dict:
+    """Normalizes parameters for search_properties."""
+    search = _first_val(args, "p_search", "p_query", "query")
+    market = _first_val(args, "p_market", "market")
+    platform = _first_val(args, "p_platform", "platform")
+    bedrooms = _first_val(args, "p_bedrooms", "bedrooms")
+    avail = args.get("p_available") if "p_available" in args else args.get("available")
+    is_act = args.get("p_is_active") if "p_is_active" in args else True
+    pos = _norm_rank_pos(_first_val(args, "p_rank_position", "rank_position"))
+    sort_by = _first_val(args, "p_sort_by", "sort_by", default="rate")
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 20, default=6)
+    return {
+        "p_search": str(search) if search else None,
+        "p_market": str(market) if market else None,
+        "p_platform": str(platform) if platform else None,
+        "p_bedrooms": int(bedrooms) if bedrooms is not None else None,
+        "p_available": bool(avail) if avail is not None else None,
+        "p_is_active": bool(is_act) if is_act is not None else None,
+        "p_rank_position": pos,
+        "p_sort_by": str(sort_by),
+        "p_limit": limit,
+    }
+
+
+def _norm_availability_rate(args: dict) -> dict:
+    """Normalizes parameters for get_availability_rate."""
+    market = _first_val(args, "p_market", "market")
+    platform = _first_val(args, "p_platform", "platform")
+    return {
+        "p_market": str(market) if market else None,
+        "p_platform": str(platform) if platform else None,
+    }
+
+
+def _norm_nearby_properties(args: dict) -> dict:
+    """Normalizes parameters for get_nearby_properties."""
+    lat = _first_val(args, "p_latitude", "latitude")
+    lon = _first_val(args, "p_longitude", "longitude")
+    if lat is None or lon is None:
+        return {
+            "status": "error",
+            "message": "get_nearby_properties requires p_latitude and p_longitude. Call geocode_address first if you only have an address."
+        }
+    rad_raw = _first_val(args, "p_radius_km", "radius_km", default=5.0)
+    rad = max(0.1, min(float(rad_raw), 20.0))
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 20, default=6)
+    return {
+        "p_latitude": float(lat),
+        "p_longitude": float(lon),
+        "p_radius_km": rad,
+        "p_limit": limit,
+    }
+
+
+def _norm_distance_km(args: dict) -> dict:
+    """Normalizes parameters for get_distance_km."""
+    p_a = _first_val(args, "property_a_id", "p_from_property_id", "from_property_id")
+    p_b = _first_val(args, "property_b_id", "p_to_property_id", "to_property_id")
+    if not is_valid_uuid(p_a) or not is_valid_uuid(p_b):
+        return {"status": "error", "message": "Invalid UUID format. Both property IDs must be valid UUIDs."}
+    return {
+        "property_a_id": p_a,
+        "property_b_id": p_b,
+    }
+
+
+def _norm_tracked_markets(args: dict) -> dict:
+    """Normalizes parameters for get_tracked_markets."""
+    plat = _first_val(args, "p_platform", "platform")
+    return {"p_platform": str(plat) if plat else None}
+
+
+def _norm_recently_changed_tracking(args: dict) -> dict:
+    """Normalizes parameters for get_recently_changed_tracking."""
+    days = _clamp(_first_val(args, "p_days", "days"), 1, 90, default=30)
+    return {"p_days": days}
+
+
+def _norm_property_detail(args: dict) -> dict:
+    """Normalizes parameters for get_property_detail."""
+    search = _first_val(args, "p_property_search", "property_search", "property_id", "name")
+    if not search:
+        return {"status": "error", "message": "get_property_detail requires p_property_search (UUID or property title)."}
+    days = _clamp(_first_val(args, "p_history_days", "history_days", "days"), 1, 30, default=14)
+    return {
+        "p_property_search": str(search),
+        "p_history_days": days,
+    }
+
+
+def _norm_market_rate_changes(args: dict) -> dict:
+    """Normalizes parameters for get_market_rate_changes."""
+    market = _first_val(args, "p_market", "market")
+    days = _clamp(_first_val(args, "p_days", "days"), 1, 30, default=7)
+    limit = _clamp(_first_val(args, "p_limit", "limit"), 1, 5, default=5)
+    return {
+        "p_market": str(market) if market else None,
+        "p_days": days,
+        "p_limit": limit,
+    }
+
+
+_TOOL_NORMALIZERS = {
+    "get_real_estate_kpis": _norm_kpis,
+    "get_dashboard_kpis": _norm_kpis,
+    "get_market_averages": _norm_market_averages,
+    "get_market_snapshot": _norm_market_snapshot,
+    "get_market_trend": _norm_market_trend,
+    "get_spike_alerts": _norm_spike_alerts,
+    "get_rate_anomaly_report": _norm_rate_anomaly_report,
+    "get_most_volatile_properties": _norm_most_volatile_properties,
+    "get_property_snapshot": _norm_property_snapshot,
+    "get_property_rate_changes": _norm_property_rate_changes,
+    "compare_properties": _norm_compare_properties,
+    "search_properties": _norm_search_properties,
+    "get_availability_rate": _norm_availability_rate,
+    "get_nearby_properties": _norm_nearby_properties,
+    "get_distance_km": _norm_distance_km,
+    "get_tracked_markets": _norm_tracked_markets,
+    "get_recently_changed_tracking": _norm_recently_changed_tracking,
+    "get_property_detail": _norm_property_detail,
+    "get_market_rate_changes": _norm_market_rate_changes,
+}
+
+
+async def _call_supabase_rpc(func_name: str, clean_args: dict) -> dict:
+    """Invokes Supabase RPC with cleaned parameters and formats response."""
+    try:
         query_params = {k: v for k, v in clean_args.items() if v is not None}
         res = supabase.rpc(func_name, query_params).execute()
         raw = res.data
@@ -289,9 +321,6 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
                 raw["status"] = "success"
             return raw
 
-        if isinstance(raw, list):
-            return {"status": "success", "data": raw}
-
         return {"status": "success", "data": raw}
 
     except Exception as e:
@@ -302,6 +331,28 @@ async def execute_tool_rpc(func_name: str, args: dict) -> dict:
                 "message": f"Tool argument schema mismatch for '{func_name}'. Ensure parameters strictly match pulse_ai_revamped_rpcs.sql."
             }
         return {"status": "error", "message": err_msg}
+
+
+async def execute_tool_rpc(func_name: str, args: dict) -> dict:
+    """Executes a read-only Supabase RPC matching the tool schema."""
+    if func_name in _PYTHON_SIDE_TOOLS:
+        return {
+            "status": "error",
+            "message": f"Tool '{func_name}' is handled client-side and must not route to Supabase."
+        }
+
+    normalizer = _TOOL_NORMALIZERS.get(func_name)
+    if not normalizer:
+        return {
+            "status": "error",
+            "message": f"Unknown tool name: '{func_name}'"
+        }
+
+    clean_args = normalizer(args)
+    if "status" in clean_args and clean_args["status"] == "error":
+        return clean_args
+
+    return await _call_supabase_rpc(func_name, clean_args)
 
 
 async def search_methodology_rag(query: str, top_k: int = 3) -> list:
