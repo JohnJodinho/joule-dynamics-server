@@ -37,6 +37,51 @@ class TestRouterClassification:
         from services.query_router import _VALID_CLASSIFICATIONS
         assert len(_VALID_CLASSIFICATIONS) == 7
 
+    def test_rescue_classification_email_address(self):
+        from services.query_router import _rescue_classification
+        history = [
+            {"role": "user", "content": "Send me a report whenever rate changes in Abuja"},
+            {"role": "assistant", "content": "Sure thing! To set up a notification for any rate changes in Abuja, I'll need the email address where you'd like to receive the alerts."},
+        ]
+        result = _rescue_classification("OUT_OF_SCOPE", "john.albarka.ibrahim@gmail.com", history)
+        assert result == "ALERT_SUBSCRIPTION"
+
+    def test_rescue_classification_alert_short_reply(self):
+        from services.query_router import _rescue_classification
+        history = [
+            {"role": "assistant", "content": "Would you like a daily or weekly digest for Miami?"},
+        ]
+        assert _rescue_classification("OUT_OF_SCOPE", "weekly", history) == "ALERT_SUBSCRIPTION"
+        assert _rescue_classification("OUT_OF_SCOPE", "daily please", history) == "ALERT_SUBSCRIPTION"
+
+    def test_rescue_classification_general_question_short_reply(self):
+        from services.query_router import _rescue_classification
+        history = [
+            {"role": "assistant", "content": "Which market would you like me to analyze?"},
+        ]
+        assert _rescue_classification("OUT_OF_SCOPE", "Miami", history) == "PATH_A"
+
+    def test_rescue_classification_truly_out_of_scope_preserved(self):
+        from services.query_router import _rescue_classification
+        history = [
+            {"role": "assistant", "content": "Sure thing! I need your email address."},
+        ]
+        result = _rescue_classification("OUT_OF_SCOPE", "how do I bake a chocolate cake with vanilla frosting?", history)
+        assert result == "OUT_OF_SCOPE"
+
+    def test_build_router_messages_includes_history(self):
+        from services.query_router import _build_router_messages
+        history = [
+            {"role": "user", "content": "User Context Filters: {}\nUser Query: Track Abuja"},
+            {"role": "assistant", "content": "What is your email address?"},
+        ]
+        messages = _build_router_messages("john@example.com", history)
+        assert len(messages) == 4
+        assert messages[0]["role"] == "system"
+        assert messages[1]["content"] == "Track Abuja"
+        assert messages[2]["content"] == "What is your email address?"
+        assert messages[3]["content"] == "john@example.com"
+
 
 class TestToolResolution:
     """Verify _resolve_active_tools returns exactly 2 tools for ALERT_SUBSCRIPTION."""

@@ -3,15 +3,22 @@ Prompt definitions and dynamic prompt composer for the Joule Dynamics Real Estat
 """
 
 ROUTER_PROMPT = """You are the classification router for the Joule Dynamics Real Estate Intelligence Layer.
-Analyze the user query and classify it into EXACTLY ONE of seven classifications:
+Analyze the user's latest query in the context of the ongoing conversation and classify it into EXACTLY ONE of seven classifications:
 
-1. "OUT_OF_SCOPE": Query asks about topics completely unrelated to real estate, data monitoring, or the current conversation (e.g. sports, general coding, cooking, recipes). IMPORTANT: Questions asking who you are ("who are you?"), what model you are, or asking to summarize/recap what was discussed in the current chat ("what have we discussed so far?", "summarize our chat") are ALWAYS IN-SCOPE and must NEVER be classified as OUT_OF_SCOPE.
-2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates).
+1. "OUT_OF_SCOPE": Query asks about topics completely unrelated to real estate, data monitoring, or the current conversation (e.g. sports, general coding, cooking, recipes).
+CRITICAL MULTI-TURN CONTINUATION RULES:
+- If the conversation is already in progress and the user is answering or continuing an ongoing topic, it is NEVER OUT_OF_SCOPE.
+- An answer providing an email address, frequency (daily/weekly), threshold percentage, or confirmation for an alert setup MUST be classified as "ALERT_SUBSCRIPTION".
+- An answer specifying a market name (e.g. "Abuja", "Miami"), property name, date range, or filter in response to an assistant question MUST be classified as "PATH_A" or "BOTH".
+- Questions asking who you are ("who are you?"), what model you are, or asking to summarize/recap what was discussed ("what have we discussed so far?", "summarize our chat") are ALWAYS IN-SCOPE (classify as "GREETING" or "PATH_B").
+- ONLY classify as "OUT_OF_SCOPE" if the user explicitly switches the topic to a completely unrelated subject outside real estate and outside the chat history.
+2. "PATH_A": Query asks a live-data question (prices, spikes, availability, market averages, KPIs, specific listing rates), OR provides clarification (market, date, property) for an active data query.
 3. "PATH_B": Query asks a dashboard visual/UI question (e.g. "What do the top 4 metric cards mean?", "Why does the table say 'Was Available'?", "What do the green/red map pins mean?", "Why is the chart line dotted?", "What does the sparkline mean?", "Why is a row dimmed?"), OR asks a real estate methodology/business logic question (7-day average definition, 2-night check-in window, 4x daily scrape cadence, booked vs host-blocked, temporal UX states), OR asks a meta-conversational question (e.g. "What have we discussed so far?", "Can you summarize our conversation?", "Recap what we talked about").
 4. "BOTH": Query requires BOTH explaining a dashboard UI/methodology concept AND fetching live data metrics via tools.
 5. "GREETING": User is saying hello, thanking the assistant, asking "who are you?", or making casual conversation.
 6. "COMMERCIAL_HANDOFF": Query asks about getting started, hiring Joule Dynamics, custom builds, custom dashboards, pricing for software, or requests tracking for their own specific portfolio outside the demo scope.
-7. "ALERT_SUBSCRIPTION": User wants to be notified about a future event — price spikes, rate changes, availability changes, new listings, pricing anomalies, volatility, trend reversals, or recurring market digests. Keywords: "alert me", "notify me", "let me know when", "tell me when", "tell me whenever", "subscribe", "watch this", "track this for me". This is DISTINCT from PATH_A (which asks about current/historical data, not future notifications).
+7. "ALERT_SUBSCRIPTION": User wants to be notified about a future event — price spikes, rate changes, availability changes, new listings, pricing anomalies, volatility, trend reversals, or recurring market digests (e.g. "alert me", "notify me", "let me know when", "tell me when", "tell me whenever", "subscribe", "watch this", "track this for me").
+CRITICAL: ALSO includes any follow-up response where the user provides an email address, threshold, frequency, or market choice after the assistant offered or asked to set up an alert!
 
 Respond ONLY with valid JSON matching this schema:
 {

@@ -115,7 +115,7 @@ async def resolve_suggested_actions(user_query: str, assistant_reply: str) -> li
                 messages=messages,
                 tools=[SUGGEST_ACTIONS_TOOL],
                 tool_choice={"type": "function", "function": {"name": "suggest_actions"}},
-                max_tokens=250,
+                max_tokens=500,
                 temperature=0.0,
             )
             actions = _extract_suggested_actions_from_response(res)
@@ -157,7 +157,7 @@ async def _call_retrieval_model(messages: list[dict], active_tools: list, round_
                 messages=messages,
                 tools=active_tools,
                 tool_choice="auto",
-                max_tokens=2500,
+                max_tokens=3500,
                 temperature=0.2,
             )
             return res.choices[0].message
@@ -195,7 +195,7 @@ async def _synthesize_markdown(messages: list[dict]) -> str:
                 messages=synth_messages,
                 tools=None,
                 tool_choice="none",
-                max_tokens=2500,
+                max_tokens=3500,
                 temperature=0.2,
             )
             raw = res.choices[0].message.content or ""
@@ -252,7 +252,7 @@ async def _stream_synthesis(synth_messages: list[dict], loop: asyncio.AbstractEv
                     tools=None,
                     tool_choice="none",
                     temperature=0.2,
-                    max_tokens=2500,
+                    max_tokens=3500,
                     stream=True,
                 ),
             )
@@ -389,7 +389,8 @@ async def process_chat_message(
     with propagate_attributes(session_id=session_id, tags=["real-estate-chat"]):
         get_client().update_current_span(input=user_query)
 
-        classification, tool_categories = await classify_query(user_query)
+        recent_history = get_context_window(session_id, limit=4)
+        classification, tool_categories = await classify_query(user_query, recent_history=recent_history)
 
         if classification == "OUT_OF_SCOPE":
             get_client().update_current_span(output=_REPLY_OUT_OF_SCOPE)
@@ -437,7 +438,8 @@ async def stream_chat_message(
 ) -> AsyncIterator[dict]:
     """SSE streaming chat handler."""
     with propagate_attributes(session_id=session_id, tags=["real-estate-chat", "stream"]):
-        classification, tool_categories = await classify_query(user_query)
+        recent_history = get_context_window(session_id, limit=4)
+        classification, tool_categories = await classify_query(user_query, recent_history=recent_history)
         yield {"type": "status", "classification": classification}
 
         if classification == "OUT_OF_SCOPE":
