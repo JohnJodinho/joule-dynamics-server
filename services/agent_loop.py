@@ -48,8 +48,15 @@ logger = setup_logger(__name__)
 
 MAX_TOOL_ROUNDS = 4
 
+_TERMINAL_TOOLS = frozenset({
+    "suggest_actions",
+    "create_alert_subscription",
+    "generate_contact_buttons",
+    "generate_data_export",
+})
+
 _SYNTHESIS_DIRECTIVE = {
-    "role": "system",
+    "role": "user",
     "content": (
         "You are now delivering your final response directly to the user in clear Markdown. "
         "Synthesize all real estate data gathered above into a helpful analysis. "
@@ -72,6 +79,11 @@ _REPLY_FALLBACK = (
     "I was unable to retrieve the data needed to answer your question. "
     "Please try rephrasing, or ask 'What markets do you track?' to see all available options."
 )
+
+_FIXED_RESPONSES = {
+    "OUT_OF_SCOPE": _REPLY_OUT_OF_SCOPE,
+    "GREETING": _REPLY_GREETING,
+}
 
 ACTION_RESOLVER_PROMPT = """You are an interactive action generator for Joule Dynamics Real Estate Intelligence.
 Given the user's query and the assistant's final response, determine 0 to 4 short, highly relevant follow-up actions or clarifying choices for the user.
@@ -185,16 +197,44 @@ async def _execute_tool_calls(tool_calls: list, messages: list[dict], tool_resul
         })
 
 
+async def _execute_streaming_tool_calls(
+    tool_calls: list,
+    messages: list[dict],
+    tool_results: list,
+) -> AsyncIterator[dict]:
+    """Execute tool calls for streaming mode, yielding events and appending results to context."""
+    for tc in tool_calls:
+        fn = tc.function.name
+        args = parse_tool_args(tc.function.arguments)
+        yield {"type": "tool_call", "tool": fn, "args": args}
+        result = await execute_tool_by_name(fn, args)
+        tool_results.append({"tool": fn, "args": args})
+        messages.append({
+            "tool_call_id": tc.id,
+            "role": "tool",
+            "name": fn,
+            "content": compress_tool_output(fn, result),
+        })
+
+
+def _has_terminal_tool(tool_calls: list) -> bool:
+    """Return True if any tool call represents a terminal user interaction."""
+    for tc in tool_calls:
+        fn = getattr(getattr(tc, "function", None), "name", None)
+        if fn in _TERMINAL_TOOLS:
+            return True
+    return False
+
+
 async def _synthesize_markdown(messages: list[dict]) -> str:
     """Turn 2: Synthesize retrieved data into natural language Markdown with tools disabled."""
     synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
-    for model in [GROQ_ROUTE_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
+    for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
         try:
             res = await groq_call(
                 model=model,
                 messages=synth_messages,
                 tools=None,
-                tool_choice="none",
                 max_tokens=3500,
                 temperature=0.2,
             )
@@ -229,6 +269,8 @@ async def run_agent_loop(
 
         messages.append(normalize_assistant_message(msg))
         await _execute_tool_calls(tool_calls, messages, tool_results)
+        if _has_terminal_tool(tool_calls):
+            break
 
     reply_text = await _synthesize_markdown(messages)
 
@@ -242,15 +284,13 @@ async def run_agent_loop(
 async def _stream_synthesis(synth_messages: list[dict], loop: asyncio.AbstractEventLoop) -> AsyncIterator[dict]:
     """Stream synthesized markdown tokens through universal token stripper."""
     synthesis_succeeded = False
-    for model in [GROQ_ROUTE_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
+    for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
         try:
             stream = await loop.run_in_executor(
                 None,
                 lambda m=model: _gc.chat.completions.create(
                     model=m,
                     messages=synth_messages,
-                    tools=None,
-                    tool_choice="none",
                     temperature=0.2,
                     max_tokens=3500,
                     stream=True,
@@ -299,18 +339,11 @@ async def run_agent_loop_streaming(
             break
 
         messages.append(normalize_assistant_message(msg))
-        for tc in tool_calls:
-            fn = tc.function.name
-            args = parse_tool_args(tc.function.arguments)
-            yield {"type": "tool_call", "tool": fn, "args": args}
-            result = await execute_tool_by_name(fn, args)
-            tool_results.append({"tool": fn, "args": args})
-            messages.append({
-                "tool_call_id": tc.id,
-                "role": "tool",
-                "name": fn,
-                "content": compress_tool_output(fn, result),
-            })
+        async for event in _execute_streaming_tool_calls(tool_calls, messages, tool_results):
+            yield event
+
+        if _has_terminal_tool(tool_calls):
+            break
 
     full_reply_text = ""
     synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
@@ -332,26 +365,28 @@ async def run_agent_loop_streaming(
 
 async def _build_chat_messages(user_query: str, session_id: str, session_context: dict, classification: str) -> list[dict]:
     """Build system prompt with live markets, context window, and RAG methodology if applicable."""
-    rag_chunks: list[str] = []
-    if classification in ("PATH_B", "BOTH", "COMMERCIAL_HANDOFF"):
-        rag_chunks = await search_methodology_rag(user_query)
-
-    current_markets = market_registry.get_markets()
-    system_prompt = build_system_prompt(classification, markets=current_markets)
-    messages: list[dict] = [{"role": "system", "content": system_prompt}]
-    messages.extend(get_context_window(session_id))
-
+    rag_chunks = await search_methodology_rag(user_query) if classification in ("PATH_B", "BOTH", "COMMERCIAL_HANDOFF") else []
+    system_prompt = build_system_prompt(classification, markets=market_registry.get_markets())
     user_msg = f"User Context Filters: {json.dumps(session_context)}\nUser Query: {user_query}"
-    messages.append({"role": "user", "content": user_msg})
     append_message(session_id, {"role": "user", "content": user_msg})
 
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        *get_context_window(session_id),
+        {"role": "user", "content": user_msg},
+    ]
     if rag_chunks:
         messages.append({
             "role": "system",
             "content": "Retrieved Methodology Context:\n" + "\n---\n".join(rag_chunks),
         })
-
     return messages
+
+
+_STATIC_TOOLS_MAP = {
+    "COMMERCIAL_HANDOFF": COMMERCIAL_TOOLS,
+    "PATH_B": [SUGGEST_ACTIONS_TOOL],
+}
 
 
 def _resolve_active_tools(classification: str, user_query: str, messages: list[dict], tool_categories: list[str]) -> list[dict] | None:
@@ -361,22 +396,15 @@ def _resolve_active_tools(classification: str, user_query: str, messages: list[d
         if len(user_query.strip()) < 25 and len(messages) > 2:
             for prev_msg in reversed(messages[:-1]):
                 if prev_msg.get("role") == "user":
-                    prev_content = prev_msg.get("content", "")
-                    discovery_query = f"{prev_content} {user_query}"
+                    discovery_query = f"{prev_msg.get('content', '')} {user_query}"
                     break
         return discover_tools(discovery_query, categories=tool_categories, top_k=4)
-
-    if classification == "COMMERCIAL_HANDOFF":
-        return COMMERCIAL_TOOLS
-
-    if classification == "PATH_B":
-        return [SUGGEST_ACTIONS_TOOL]
 
     if classification == "ALERT_SUBSCRIPTION":
         from services.alert_tool_schema import CREATE_ALERT_SUBSCRIPTION_TOOL
         return [CREATE_ALERT_SUBSCRIPTION_TOOL, SUGGEST_ACTIONS_TOOL]
 
-    return None
+    return _STATIC_TOOLS_MAP.get(classification)
 
 
 @observe(name="process-chat")
@@ -392,13 +420,10 @@ async def process_chat_message(
         recent_history = get_context_window(session_id, limit=4)
         classification, tool_categories = await classify_query(user_query, recent_history=recent_history)
 
-        if classification == "OUT_OF_SCOPE":
-            get_client().update_current_span(output=_REPLY_OUT_OF_SCOPE)
-            return {"reply": _REPLY_OUT_OF_SCOPE, "path_used": "OUT_OF_SCOPE", "tools_called": [], "suggested_actions": []}
-
-        if classification == "GREETING":
-            get_client().update_current_span(output=_REPLY_GREETING)
-            return {"reply": _REPLY_GREETING, "path_used": "GREETING", "tools_called": [], "suggested_actions": []}
+        if classification in _FIXED_RESPONSES:
+            reply = _FIXED_RESPONSES[classification]
+            get_client().update_current_span(output=reply)
+            return {"reply": reply, "path_used": classification, "tools_called": [], "suggested_actions": []}
 
         messages = await _build_chat_messages(user_query, session_id, session_context, classification)
         active_tools = _resolve_active_tools(classification, user_query, messages, tool_categories)
@@ -442,14 +467,10 @@ async def stream_chat_message(
         classification, tool_categories = await classify_query(user_query, recent_history=recent_history)
         yield {"type": "status", "classification": classification}
 
-        if classification == "OUT_OF_SCOPE":
-            yield {"type": "token", "token": _REPLY_OUT_OF_SCOPE}
-            yield {"type": "done", "tools_called": [], "suggested_actions": [], "path_used": "OUT_OF_SCOPE"}
-            return
-
-        if classification == "GREETING":
-            yield {"type": "token", "token": _REPLY_GREETING}
-            yield {"type": "done", "tools_called": [], "suggested_actions": [], "path_used": "GREETING"}
+        if classification in _FIXED_RESPONSES:
+            reply = _FIXED_RESPONSES[classification]
+            yield {"type": "token", "token": reply}
+            yield {"type": "done", "tools_called": [], "suggested_actions": [], "path_used": classification}
             return
 
         messages = await _build_chat_messages(user_query, session_id, session_context, classification)

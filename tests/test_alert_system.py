@@ -375,3 +375,29 @@ class TestRoutesRegistered:
         from routes.v1.alerts import router
         paths = [route.path for route in router.routes]
         assert "/api/v1/internal/evaluate-alerts" in paths
+
+
+class TestTerminalToolsLoop:
+    """Verify loop termination on interactive terminal tools and role formatting."""
+
+    def test_terminal_tools_set(self):
+        from services.agent_loop import _TERMINAL_TOOLS
+        expected = {"suggest_actions", "create_alert_subscription", "generate_contact_buttons", "generate_data_export"}
+        assert expected.issubset(_TERMINAL_TOOLS)
+
+    def test_has_terminal_tool_detection(self):
+        from services.agent_loop import _has_terminal_tool
+        from unittest.mock import MagicMock
+
+        terminal_call = MagicMock()
+        terminal_call.function.name = "create_alert_subscription"
+        assert _has_terminal_tool([terminal_call]) is True
+
+        non_terminal_call = MagicMock()
+        non_terminal_call.function.name = "get_market_averages"
+        assert _has_terminal_tool([non_terminal_call]) is False
+
+    def test_synthesis_directive_role_is_user(self):
+        from services.agent_loop import _SYNTHESIS_DIRECTIVE
+        assert _SYNTHESIS_DIRECTIVE["role"] == "user"
+
