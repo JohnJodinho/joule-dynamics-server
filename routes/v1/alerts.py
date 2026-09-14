@@ -134,3 +134,46 @@ async def trigger_all_workers(request: Request):
         "digests": digest_result,
         "cleaned_subscriptions": cleanup_count,
     }
+
+
+@router.get("/internal/diagnose-smtp")
+async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
+    """Diagnostics endpoint: returns exact network and credential state for SMTP."""
+    import smtplib
+    import socket
+    from email.mime.text import MIMEText
+    from config import EMAIL_FROM_ADDRESS, EMAIL_SMTP_HOST, EMAIL_SMTP_PASSWORD, EMAIL_SMTP_PORT
+
+    steps: dict[str, object] = {
+        "host": EMAIL_SMTP_HOST,
+        "port": EMAIL_SMTP_PORT,
+        "from_address": EMAIL_FROM_ADDRESS,
+        "password_set": bool(EMAIL_SMTP_PASSWORD),
+        "password_len": len(EMAIL_SMTP_PASSWORD) if EMAIL_SMTP_PASSWORD else 0,
+    }
+
+    try:
+        sock = socket.create_connection((EMAIL_SMTP_HOST, EMAIL_SMTP_PORT), timeout=10)
+        sock.close()
+        steps["socket"] = "CONNECTED"
+    except Exception as exc:
+        steps["socket"] = f"FAILED: {exc}"
+        return JSONResponse(content={"status": "error", "steps": steps})
+
+    try:
+        with smtplib.SMTP(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=15) as server:
+            server.starttls()
+            steps["starttls"] = "SUCCESS"
+            server.login(EMAIL_FROM_ADDRESS, EMAIL_SMTP_PASSWORD)
+            steps["login"] = "SUCCESS"
+            msg = MIMEText("Pulse AI SMTP Diagnostic Test")
+            msg["From"] = EMAIL_FROM_ADDRESS
+            msg["To"] = to
+            msg["Subject"] = "Pulse AI SMTP Diagnostic"
+            server.sendmail(EMAIL_FROM_ADDRESS, to, msg.as_string())
+            steps["sendmail"] = "SUCCESS"
+        return JSONResponse(content={"status": "success", "steps": steps})
+    except Exception as exc:
+        steps["smtp_error"] = f"{type(exc).__name__}: {exc}"
+        return JSONResponse(content={"status": "error", "steps": steps})
+
