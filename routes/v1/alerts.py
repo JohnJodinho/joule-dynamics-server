@@ -149,31 +149,7 @@ async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
         "password_len": len(EMAIL_SMTP_PASSWORD) if EMAIL_SMTP_PASSWORD else 0,
     }
 
-    # Test 587
-    try:
-        s587 = socket.create_connection((EMAIL_SMTP_HOST, 587), timeout=5)
-        s587.close()
-        steps["port_587"] = "CONNECTED"
-    except Exception as exc:
-        steps["port_587"] = f"FAILED: {exc}"
-
-    # Test 465 (SSL)
-    try:
-        s465 = socket.create_connection((EMAIL_SMTP_HOST, 465), timeout=5)
-        s465.close()
-        steps["port_465"] = "CONNECTED"
-    except Exception as exc:
-        steps["port_465"] = f"FAILED: {exc}"
-
-    # Test 25
-    try:
-        s25 = socket.create_connection((EMAIL_SMTP_HOST, 25), timeout=5)
-        s25.close()
-        steps["port_25"] = "CONNECTED"
-    except Exception as exc:
-        steps["port_25"] = f"FAILED: {exc}"
-
-    # Test Resend HTTPS dispatch
+    # Test Resend HTTPS dispatch first (instant over port 443)
     from config import RESEND_API_KEY, RESEND_FROM_ADDRESS
     steps["resend_key_set"] = bool(RESEND_API_KEY)
     steps["resend_from"] = RESEND_FROM_ADDRESS
@@ -186,20 +162,20 @@ async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
         except Exception as exc:
             steps["resend_dispatch"] = f"FAILED: {exc}"
 
-    # If 465 connected, try SSL send
-    if steps.get("port_465") == "CONNECTED":
-        try:
-            with smtplib.SMTP_SSL(EMAIL_SMTP_HOST, 465, timeout=10) as server:
-                server.login(EMAIL_FROM_ADDRESS, EMAIL_SMTP_PASSWORD)
-                msg = MIMEText("Pulse AI SSL Diagnostic Test")
-                msg["From"] = EMAIL_FROM_ADDRESS
-                msg["To"] = to
-                msg["Subject"] = "Pulse AI SSL Diagnostic"
-                server.sendmail(EMAIL_FROM_ADDRESS, to, msg.as_string())
-            steps["ssl_send_465"] = "SUCCESS"
-            return JSONResponse(content={"status": "success", "provider": "smtp_465", "steps": steps})
-        except Exception as exc:
-            steps["ssl_send_465"] = f"FAILED: {exc}"
+    # Probe raw SMTP sockets only if Resend is not configured or failed
+    try:
+        s587 = socket.create_connection((EMAIL_SMTP_HOST, 587), timeout=3)
+        s587.close()
+        steps["port_587"] = "CONNECTED"
+    except Exception as exc:
+        steps["port_587"] = f"FAILED: {exc}"
+
+    try:
+        s465 = socket.create_connection((EMAIL_SMTP_HOST, 465), timeout=3)
+        s465.close()
+        steps["port_465"] = "CONNECTED"
+    except Exception as exc:
+        steps["port_465"] = f"FAILED: {exc}"
 
     return JSONResponse(content={"status": "error", "steps": steps})
 
