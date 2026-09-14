@@ -145,35 +145,48 @@ async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
     from config import EMAIL_FROM_ADDRESS, EMAIL_SMTP_HOST, EMAIL_SMTP_PASSWORD, EMAIL_SMTP_PORT
 
     steps: dict[str, object] = {
-        "host": EMAIL_SMTP_HOST,
-        "port": EMAIL_SMTP_PORT,
-        "from_address": EMAIL_FROM_ADDRESS,
         "password_set": bool(EMAIL_SMTP_PASSWORD),
         "password_len": len(EMAIL_SMTP_PASSWORD) if EMAIL_SMTP_PASSWORD else 0,
     }
 
+    # Test 587
     try:
-        sock = socket.create_connection((EMAIL_SMTP_HOST, EMAIL_SMTP_PORT), timeout=10)
-        sock.close()
-        steps["socket"] = "CONNECTED"
+        s587 = socket.create_connection((EMAIL_SMTP_HOST, 587), timeout=5)
+        s587.close()
+        steps["port_587"] = "CONNECTED"
     except Exception as exc:
-        steps["socket"] = f"FAILED: {exc}"
-        return JSONResponse(content={"status": "error", "steps": steps})
+        steps["port_587"] = f"FAILED: {exc}"
 
+    # Test 465 (SSL)
     try:
-        with smtplib.SMTP(EMAIL_SMTP_HOST, EMAIL_SMTP_PORT, timeout=15) as server:
-            server.starttls()
-            steps["starttls"] = "SUCCESS"
-            server.login(EMAIL_FROM_ADDRESS, EMAIL_SMTP_PASSWORD)
-            steps["login"] = "SUCCESS"
-            msg = MIMEText("Pulse AI SMTP Diagnostic Test")
-            msg["From"] = EMAIL_FROM_ADDRESS
-            msg["To"] = to
-            msg["Subject"] = "Pulse AI SMTP Diagnostic"
-            server.sendmail(EMAIL_FROM_ADDRESS, to, msg.as_string())
-            steps["sendmail"] = "SUCCESS"
-        return JSONResponse(content={"status": "success", "steps": steps})
+        s465 = socket.create_connection((EMAIL_SMTP_HOST, 465), timeout=5)
+        s465.close()
+        steps["port_465"] = "CONNECTED"
     except Exception as exc:
-        steps["smtp_error"] = f"{type(exc).__name__}: {exc}"
-        return JSONResponse(content={"status": "error", "steps": steps})
+        steps["port_465"] = f"FAILED: {exc}"
+
+    # Test 25
+    try:
+        s25 = socket.create_connection((EMAIL_SMTP_HOST, 25), timeout=5)
+        s25.close()
+        steps["port_25"] = "CONNECTED"
+    except Exception as exc:
+        steps["port_25"] = f"FAILED: {exc}"
+
+    # If 465 connected, try SSL send
+    if steps.get("port_465") == "CONNECTED":
+        try:
+            with smtplib.SMTP_SSL(EMAIL_SMTP_HOST, 465, timeout=10) as server:
+                server.login(EMAIL_FROM_ADDRESS, EMAIL_SMTP_PASSWORD)
+                msg = MIMEText("Pulse AI SSL Diagnostic Test")
+                msg["From"] = EMAIL_FROM_ADDRESS
+                msg["To"] = to
+                msg["Subject"] = "Pulse AI SSL Diagnostic"
+                server.sendmail(EMAIL_FROM_ADDRESS, to, msg.as_string())
+            steps["ssl_send_465"] = "SUCCESS"
+            return JSONResponse(content={"status": "success", "steps": steps})
+        except Exception as exc:
+            steps["ssl_send_465"] = f"FAILED: {exc}"
+
+    return JSONResponse(content={"status": "error", "steps": steps})
 
