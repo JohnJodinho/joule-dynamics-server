@@ -173,6 +173,19 @@ async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
     except Exception as exc:
         steps["port_25"] = f"FAILED: {exc}"
 
+    # Test Resend HTTPS dispatch
+    from config import RESEND_API_KEY, RESEND_FROM_ADDRESS
+    steps["resend_key_set"] = bool(RESEND_API_KEY)
+    steps["resend_from"] = RESEND_FROM_ADDRESS
+    if RESEND_API_KEY:
+        try:
+            from services.email_service import _send_resend
+            _send_resend(to, "Pulse AI Resend Diagnostic Test", "<p>Testing Resend over HTTPS 443.</p>")
+            steps["resend_dispatch"] = "SUCCESS"
+            return JSONResponse(content={"status": "success", "provider": "resend", "steps": steps})
+        except Exception as exc:
+            steps["resend_dispatch"] = f"FAILED: {exc}"
+
     # If 465 connected, try SSL send
     if steps.get("port_465") == "CONNECTED":
         try:
@@ -184,7 +197,7 @@ async def diagnose_smtp(to: str = "john.albarka.ibrahim@gmail.com"):
                 msg["Subject"] = "Pulse AI SSL Diagnostic"
                 server.sendmail(EMAIL_FROM_ADDRESS, to, msg.as_string())
             steps["ssl_send_465"] = "SUCCESS"
-            return JSONResponse(content={"status": "success", "steps": steps})
+            return JSONResponse(content={"status": "success", "provider": "smtp_465", "steps": steps})
         except Exception as exc:
             steps["ssl_send_465"] = f"FAILED: {exc}"
 

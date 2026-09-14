@@ -11,6 +11,8 @@ from config import (
     EMAIL_SMTP_HOST,
     EMAIL_SMTP_PASSWORD,
     EMAIL_SMTP_PORT,
+    RESEND_API_KEY,
+    RESEND_FROM_ADDRESS,
 )
 from services.observability import setup_logger
 
@@ -88,12 +90,44 @@ def build_frequency_description(criteria_type: str, criteria: dict) -> str:
     return _FREQUENCY_DESCRIPTIONS.get(criteria_type, "Checked periodically.")
 
 
+def _send_resend(to: str, subject: str, body_html: str) -> None:
+    """Send email via Resend HTTP REST API over outbound HTTPS port 443."""
+    import json
+    import urllib.request
+
+    url = "https://api.resend.com/emails"
+    headers = {
+        "Authorization": f"Bearer {RESEND_API_KEY}",
+        "Content-Type": "application/json",
+        "User-Agent": "PulseAI/1.0",
+    }
+    payload = {
+        "from": RESEND_FROM_ADDRESS,
+        "to": [to],
+        "subject": subject,
+        "html": body_html,
+    }
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers=headers,
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        if resp.status not in (200, 201):
+            raise RuntimeError(f"Resend HTTP error: {resp.status}")
+
+
 async def send_email(to: str, subject: str, body_html: str) -> bool:
-    """Send email via configured SMTP provider. Returns True on success."""
+    """Send email via Resend (HTTPS 443) if configured, else fallback to SMTP."""
     loop = asyncio.get_event_loop()
     try:
+        if RESEND_API_KEY:
+            await loop.run_in_executor(None, _send_resend, to, subject, body_html)
+            logger.info(f"[email-resend] sent to={to} subject={subject[:50]}")
+            return True
         await loop.run_in_executor(None, _send_smtp, to, subject, body_html)
-        logger.info(f"[email] sent to={to} subject={subject[:50]}")
+        logger.info(f"[email-smtp] sent to={to} subject={subject[:50]}")
         return True
     except Exception as exc:
         logger.error(f"[email] failed to={to}: {exc}")

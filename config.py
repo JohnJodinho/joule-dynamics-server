@@ -42,6 +42,11 @@ EMAIL_SMTP_HOST = os.environ.get("EMAIL_SMTP_HOST", "smtp.gmail.com")
 EMAIL_SMTP_PORT = int(os.environ.get("EMAIL_SMTP_PORT", "587"))
 EMAIL_FROM_ADDRESS = os.environ.get("EMAIL_FROM_ADDRESS", "jouledynamicscto@gmail.com")
 EMAIL_SMTP_PASSWORD = os.environ.get("EMAIL_SMTP_PASSWORD", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+RESEND_FROM_ADDRESS = os.environ.get(
+    "RESEND_FROM_ADDRESS",
+    "Pulse AI <onboarding@resend.dev>",
+)
 ALERT_BASE_URL = os.environ.get(
     "ALERT_BASE_URL",
     os.environ.get("CONFIRMATION_BASE_URL", "https://johnalbarkaibrahim-sentimentscope.hf.space"),
