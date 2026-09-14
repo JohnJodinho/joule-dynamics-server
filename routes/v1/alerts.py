@@ -77,16 +77,60 @@ async def unsubscribe_alert(token: str):
     )
 
 
+def _is_internal_authorized(request: Request) -> bool:
+    """Verify internal API key header."""
+    provided_key = request.headers.get("X-Internal-Key", "")
+    return bool(INTERNAL_API_KEY and provided_key == INTERNAL_API_KEY)
+
+
 @router.post("/internal/evaluate-alerts")
 async def trigger_alert_evaluation(request: Request):
     """Internal endpoint: evaluates all active subscriptions. Secured by X-Internal-Key header."""
-    provided_key = request.headers.get("X-Internal-Key", "")
-    if not INTERNAL_API_KEY or provided_key != INTERNAL_API_KEY:
-        return JSONResponse(
-            status_code=status.HTTP_403_FORBIDDEN,
-            content={"error": "Forbidden"},
-        )
+    if not _is_internal_authorized(request):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"error": "Forbidden"})
 
     from workers.alert_evaluator import evaluate_all_active_subscriptions
-    result = await evaluate_all_active_subscriptions()
-    return result
+    return await evaluate_all_active_subscriptions()
+
+
+@router.post("/internal/send-digests")
+async def trigger_send_digests(request: Request):
+    """Internal endpoint: sends pending market digests. Secured by X-Internal-Key header."""
+    if not _is_internal_authorized(request):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"error": "Forbidden"})
+
+    from workers.digest_sender import send_pending_digests
+    return await send_pending_digests()
+
+
+@router.post("/internal/cleanup-alerts")
+async def trigger_cleanup_alerts(request: Request):
+    """Internal endpoint: deletes unconfirmed stale subscriptions. Secured by X-Internal-Key header."""
+    if not _is_internal_authorized(request):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"error": "Forbidden"})
+
+    from workers.alert_cleanup import cleanup_stale_subscriptions
+    count = await cleanup_stale_subscriptions()
+    return {"status": "success", "deleted_count": count}
+
+
+@router.post("/internal/run-all-workers")
+async def trigger_all_workers(request: Request):
+    """Internal endpoint: sequentially runs alert evaluation, digests, and cleanup."""
+    if not _is_internal_authorized(request):
+        return JSONResponse(status_code=status.HTTP_403_FORBIDDEN, content={"error": "Forbidden"})
+
+    from workers.alert_cleanup import cleanup_stale_subscriptions
+    from workers.alert_evaluator import evaluate_all_active_subscriptions
+    from workers.digest_sender import send_pending_digests
+
+    eval_result = await evaluate_all_active_subscriptions()
+    digest_result = await send_pending_digests()
+    cleanup_count = await cleanup_stale_subscriptions()
+
+    return {
+        "status": "success",
+        "evaluator": eval_result,
+        "digests": digest_result,
+        "cleaned_subscriptions": cleanup_count,
+    }

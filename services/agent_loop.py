@@ -38,6 +38,7 @@ from services.tool_executor import (
     parse_failed_generation,
     parse_tool_args,
 )
+from services.action_resolver import resolve_actions_safely
 from services.tools import (
     COMMERCIAL_TOOLS,
     SUGGEST_ACTIONS_TOOL,
@@ -46,7 +47,7 @@ from services.tools import (
 
 logger = setup_logger(__name__)
 
-MAX_TOOL_ROUNDS = 4
+MAX_TOOL_ROUNDS = 2
 
 _TERMINAL_TOOLS = frozenset({
     "suggest_actions",
@@ -63,6 +64,15 @@ _SYNTHESIS_DIRECTIVE = {
         "If any required parameters (dates, market name) were missing or a tool returned an error, "
         "politely ask the user for clarification in your prose — do NOT output XML tags, tool calls, "
         "code blocks, or pseudo-function syntax of any kind. Respond only in natural language Markdown."
+    ),
+}
+
+_ACTION_DIRECTIVE = {
+    "role": "user",
+    "content": (
+        "You are now delivering your final response directly to the user in clear Markdown. "
+        "Confirm the action or alert subscription clearly and concisely based strictly on the tool result above. "
+        "Do NOT re-generate previous market data tables, bullet points, or analyses from earlier in the chat."
     ),
 }
 
@@ -85,58 +95,6 @@ _FIXED_RESPONSES = {
     "GREETING": _REPLY_GREETING,
 }
 
-ACTION_RESOLVER_PROMPT = """You are an interactive action generator for Joule Dynamics Real Estate Intelligence.
-Given the user's query and the assistant's final response, determine 0 to 4 short, highly relevant follow-up actions or clarifying choices for the user.
-Guidelines:
-- If the assistant asked a clarifying question (e.g. which market or date), provide those exact choices using the actual tracked market names available in the conversation context.
-- If the assistant provided market/price analysis, suggest logical next-step actions (e.g. ["Compare market averages", "See Rate Volatility", "Generate Download Report"]).
-- If the conversation is complete, a simple greeting, or no follow-up is genuinely useful, return an empty array actions: [].
-- You must return ONLY via the suggest_actions tool call. Do not force suggestions if none are genuinely helpful."""
-
-
-def _extract_suggested_actions_from_response(res: object) -> list[str]:
-    """Extract action strings from forced suggest_actions tool call response."""
-    msg = getattr(res, "choices", [None])[0].message
-    tool_calls = getattr(msg, "tool_calls", None)
-    if not tool_calls:
-        return []
-
-    args = parse_tool_args(tool_calls[0].function.arguments)
-    actions = args.get("actions") or args.get("options") or []
-    if not isinstance(actions, list):
-        return []
-
-    return [str(a).strip() for a in actions if str(a).strip()][:4]
-
-
-async def resolve_suggested_actions(user_query: str, assistant_reply: str) -> list[str]:
-    """Turn 3: Resolve dynamic follow-up action suggestions using forced tool choice."""
-    if not assistant_reply or len(assistant_reply.strip()) < 10:
-        return []
-
-    messages = [
-        {"role": "system", "content": ACTION_RESOLVER_PROMPT},
-        {"role": "user", "content": user_query},
-        {"role": "assistant", "content": assistant_reply},
-    ]
-
-    for model in [GROQ_ROUTE_MODEL, GROQ_SYNTHESIS_MODEL]:
-        try:
-            res = await groq_call(
-                model=model,
-                messages=messages,
-                tools=[SUGGEST_ACTIONS_TOOL],
-                tool_choice={"type": "function", "function": {"name": "suggest_actions"}},
-                max_tokens=500,
-                temperature=0.0,
-            )
-            actions = _extract_suggested_actions_from_response(res)
-            if actions:
-                return actions
-        except Exception as exc:
-            logger.warning(f"[resolve_actions] error on {model}: {exc}")
-
-    return []
 
 
 async def _recover_failed_generation(exc: Exception, messages: list[dict], tool_results: list) -> bool:
@@ -226,9 +184,26 @@ def _has_terminal_tool(tool_calls: list) -> bool:
     return False
 
 
-async def _synthesize_markdown(messages: list[dict]) -> str:
+def _choose_directive(tool_results: list) -> dict:
+    """Return action confirmation directive if action tools were called, else market synthesis directive."""
+    if any(res.get("tool") in _TERMINAL_TOOLS for res in tool_results):
+        return _ACTION_DIRECTIVE
+    return _SYNTHESIS_DIRECTIVE
+
+
+def _extract_early_prose(msg: object, round_num: int) -> str | None:
+    """Extract cleaned prose if model responded without tool calls on round 1."""
+    if round_num != 1:
+        return None
+    content = getattr(msg, "content", None)
+    if not content:
+        return None
+    return strip_internal_model_markers(content)
+
+
+async def _synthesize_markdown(messages: list[dict], directive: dict | None = None) -> str:
     """Turn 2: Synthesize retrieved data into natural language Markdown with tools disabled."""
-    synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
+    synth_messages = list(messages) + [directive or _SYNTHESIS_DIRECTIVE]
     for model in [GROQ_SYNTHESIS_MODEL, GROQ_FALLBACK_SYNTHESIS_MODEL, GROQ_FALLBACK_ROUTE_MODEL]:
         try:
             res = await groq_call(
@@ -265,6 +240,11 @@ async def run_agent_loop(
 
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
+            early_prose = _extract_early_prose(msg, round_num)
+            if early_prose:
+                if suggested_actions_out is not None:
+                    suggested_actions_out.extend(await resolve_actions_safely(user_query, early_prose, tool_results))
+                return early_prose
             break
 
         messages.append(normalize_assistant_message(msg))
@@ -272,11 +252,11 @@ async def run_agent_loop(
         if _has_terminal_tool(tool_calls):
             break
 
-    reply_text = await _synthesize_markdown(messages)
+    directive = _choose_directive(tool_results)
+    reply_text = await _synthesize_markdown(messages, directive)
 
     if suggested_actions_out is not None:
-        actions = await resolve_suggested_actions(user_query, reply_text)
-        suggested_actions_out.extend(actions)
+        suggested_actions_out.extend(await resolve_actions_safely(user_query, reply_text, tool_results))
 
     return reply_text
 
@@ -316,6 +296,33 @@ async def _stream_synthesis(synth_messages: list[dict], loop: asyncio.AbstractEv
         yield {"type": "token", "token": _REPLY_FALLBACK}
 
 
+async def _stream_synthesis_and_complete(
+    messages: list[dict],
+    tool_results: list,
+    user_query: str,
+    suggested_actions_out: list | None,
+    loop: asyncio.AbstractEventLoop,
+) -> AsyncIterator[dict]:
+    """Stream final synthesis tokens and yield completion event with resolved actions."""
+    full_reply_text = ""
+    directive = _choose_directive(tool_results)
+    synth_messages = list(messages) + [directive]
+    async for event in _stream_synthesis(synth_messages, loop):
+        if event["type"] == "token":
+            full_reply_text += event["token"]
+        yield event
+
+    suggested_actions = await resolve_actions_safely(user_query, full_reply_text, tool_results)
+    if suggested_actions_out is not None:
+        suggested_actions_out.extend(suggested_actions)
+
+    yield {
+        "type": "done",
+        "tools_called": tool_results,
+        "suggested_actions": suggested_actions,
+    }
+
+
 async def run_agent_loop_streaming(
     messages: list[dict],
     active_tools: list | None,
@@ -336,6 +343,18 @@ async def run_agent_loop_streaming(
 
         tool_calls = getattr(msg, "tool_calls", None)
         if not tool_calls:
+            early_prose = _extract_early_prose(msg, round_num)
+            if early_prose:
+                yield {"type": "token", "token": early_prose}
+                actions = await resolve_actions_safely(user_query, early_prose, tool_results)
+                if suggested_actions_out is not None:
+                    suggested_actions_out.extend(actions)
+                yield {
+                    "type": "done",
+                    "tools_called": tool_results,
+                    "suggested_actions": actions,
+                }
+                return
             break
 
         messages.append(normalize_assistant_message(msg))
@@ -345,22 +364,8 @@ async def run_agent_loop_streaming(
         if _has_terminal_tool(tool_calls):
             break
 
-    full_reply_text = ""
-    synth_messages = list(messages) + [_SYNTHESIS_DIRECTIVE]
-    async for event in _stream_synthesis(synth_messages, loop):
-        if event["type"] == "token":
-            full_reply_text += event["token"]
+    async for event in _stream_synthesis_and_complete(messages, tool_results, user_query, suggested_actions_out, loop):
         yield event
-
-    suggested_actions = await resolve_suggested_actions(user_query, full_reply_text)
-    if suggested_actions_out is not None:
-        suggested_actions_out.extend(suggested_actions)
-
-    yield {
-        "type": "done",
-        "tools_called": tool_results,
-        "suggested_actions": suggested_actions,
-    }
 
 
 async def _build_chat_messages(user_query: str, session_id: str, session_context: dict, classification: str) -> list[dict]:
@@ -373,7 +378,6 @@ async def _build_chat_messages(user_query: str, session_id: str, session_context
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
         *get_context_window(session_id),
-        {"role": "user", "content": user_msg},
     ]
     if rag_chunks:
         messages.append({
@@ -402,7 +406,7 @@ def _resolve_active_tools(classification: str, user_query: str, messages: list[d
 
     if classification == "ALERT_SUBSCRIPTION":
         from services.alert_tool_schema import CREATE_ALERT_SUBSCRIPTION_TOOL
-        return [CREATE_ALERT_SUBSCRIPTION_TOOL, SUGGEST_ACTIONS_TOOL]
+        return [CREATE_ALERT_SUBSCRIPTION_TOOL]
 
     return _STATIC_TOOLS_MAP.get(classification)
 

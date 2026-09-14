@@ -111,7 +111,6 @@ async def confirm_subscription(token: str) -> dict:
             "confirmed": True,
             "status": "active",
             "confirmed_at": datetime.now(timezone.utc).isoformat(),
-            "confirmation_token": None,
         }).eq("id", sub["id"]).execute()
     except Exception as exc:
         logger.error(f"[alert_service] confirm update failed: {exc}")
